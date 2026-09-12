@@ -1,0 +1,50 @@
+{
+  "input_rows": 180,
+  "imported": 180,
+  "duplicates": 0,
+  "errors": 0,
+  "import_ms": 95.817,
+  "repeat_imported": 0,
+  "repeat_duplicates": 180,
+  "evidence_types": {
+    "synthetic": 180
+  },
+  "primary_features": {
+    "creative_test": 60,
+    "unclassified": 73,
+    "reporting": 25,
+    "budget": 16,
+    "workflow": 6
+  },
+  "unclassified_ratio": 0.4056,
+  "provided_feature_labels": 0,
+  "precision_recall": "not evaluated; requires independently adjudicated gold labels",
+  "model_calls": 0,
+  "search": [
+    {
+      "query": "소재 A/B 테스트 비교 조건",
+      "returned": 24,
+      "median_ms": 26.691,
+      "p95_ms": 33.263
+    },
+    {
+      "query": "추천 소재의 근거와 판단 보류",
+      "returned": 24,
+      "median_ms": 27.385,
+      "p95_ms": 36.422
+    },
+    {
+      "query": "소규모 광고주의 성과 리포트",
+      "returned": 24,
+      "median_ms": 26.721,
+      "p95_ms": 39.813
+    },
+    {
+      "query": "대행사 고객 승인과 공유",
+      "returned": 24,
+      "median_ms": 27.958,
+      "p95_ms": 39.307
+    }
+  ],
+  "notes": "Weighted lexical retrieval, no live LLM or semantic-relevance grading. Input text and external IDs omitted."
+}

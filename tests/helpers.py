@@ -23,13 +23,38 @@ class RecordingModel:
         if self.hook:
             self.hook()
         if task == "insights":
-            return {"insights": [{"title": "추출 테스트", "text": "소규모 광고주는 소재 분석 근거와 리포트 해석이 필요할 수 있다.", "feature": "reporting"}]}
-        ids = [payload["evidence"][0]["id"]]
+            return {"insights": [{"title": "추출 테스트", "text": "소규모 광고주는 소재 분석 근거와 리포트 해석이 필요할 수 있다.",
+                "feature": "reporting", "applicability": "광고주 기획", "limitations": "합성 검증 자료", "competitor": "", "observed_at": "", "public_url": ""}]}
+        if task == "search":
+            return {"keywords": []}
+        if task == "classify":
+            return {"classifications": [{"voc_id": r["id"], "feature_ids": ["creative_test"], "problem": "소재 해석의 어려움",
+                "need": "비교 조건 설명", "confidence": 0.8} for r in payload["voc"]]}
+        evidence = payload["evidence"]
+        chosen = []
+        for kind in ("insight", "voc"):
+            found = next((e for e in evidence if e["kind"] == kind), None)
+            if found:
+                chosen.append(found)
+        chosen = chosen or evidence[:1]
+        ids = [e["id"] for e in chosen]
         if self.bad_citation:
             ids = ["invented-source"]
+        observations = [{"evidence_id": e["id"], "quote": e["text"][:200]} for e in chosen]
         if task == "persona":
-            return {"name": "생성광고주", "segment": "소규모 광고주", "goals": "소재 분석 근거 이해", "constraints": "분석가 없음", "assumptions": "테스트용 가정", "evidence_ids": ids}
-        return {"text": "[자동 테스트 응답] " + (payload.get("persona", {}).get("name", "리서치") + ": " + payload.get("question", "PRD 제안")), "evidence_ids": ids, "assumptions": ["실제 AI 응답 품질 검증 아님"]}
+            return {"name": "생성광고주", "segment": "소규모 광고주", "goals": "소재 분석 근거 이해", "constraints": "분석가 없음",
+                    "assumptions": ["테스트용 가정"], "evidence_ids": ids, "observations": observations}
+        answer = {"text": "[자동 테스트 응답] 소재 리포트의 비교 조건과 불확실성을 확인합니다.", "evidence_ids": ids,
+                  "assumptions": ["실제 AI 응답 품질 검증 아님"], "observations": observations}
+        if task == "proposal":
+            section = next((s for s in payload["target_prd"]["sections"] if s["id"] == "requirements"), payload["target_prd"]["sections"][0])
+            answer.update(changes=[{"section_id": section["id"], "proposed_text": "소재 비교 조건과 판단 보류 이유를 표시한다.",
+                "rationale": "광고주가 해석 근거를 확인하기 위한 기획 가설", "evidence_ids": ids}], decision_ids=[d["id"] for d in payload.get("decisions", [])])
+        if task == "debrief":
+            for key in ("common_needs", "disagreements", "hypotheses", "unsupported_claims", "followup_questions"):
+                answer[key] = [{"text": "테스트용 분석 항목 · 실제 인터뷰 검증 필요", "evidence_ids": ids, "message_ids": [payload["conversation"][-1]["id"]]}]
+        return answer
+
 
 
 def encoded(filename, content, **extra):

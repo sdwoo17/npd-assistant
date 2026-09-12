@@ -56,9 +56,9 @@ class Handler(BaseHTTPRequestHandler):
                 path, mime = static[route]
                 return self.send(200, (ROOT / "static" / path).read_bytes(), mime + "; charset=utf-8")
             if route == "/api/health":
-                return self.send(200, {"status": "ok", "version": "0.1.0"})
+                return self.send(200, {"status": "ok", "version": "0.2.0"})
             _, user = self.context()
-            return self.send(200, self.server.service.get(user, route))
+            return self.send(200, self.server.service.get(user, self.path))
         except AppError as e:
             self.send(e.status, {"error": str(e)})
         except Exception:

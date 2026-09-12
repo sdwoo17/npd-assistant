@@ -1,9 +1,17 @@
 {
   "name": "npd-assistant",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "DOM integration checks for the NPD Assistant frontend",
-  "scripts": {"test": "node --test tests/ui_flow.cjs"},
-  "devDependencies": {"jsdom": "30.0.1"},
-  "engines": {"node": ">=22.13.0"}
+  "scripts": {
+    "test": "node --test tests/ui_flow.cjs",
+    "test:browser": "node --test tests/browser_flow.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "30.0.1",
+    "playwright": "1.56.1"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
 }

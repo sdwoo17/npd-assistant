@@ -20,7 +20,7 @@ class ModelTransportTests(unittest.TestCase):
                 fixture.requests.append({"path": self.path, "authorization": self.headers.get("Authorization"), "body": body})
                 if self.path == "/redirect":
                     self.send_response(302); self.send_header("Location", "http://127.0.0.1:1/never"); self.end_headers(); return
-                data = {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps({"text": "[mock HTTP response]", "evidence_ids": ["e1"], "assumptions": []})}]}]}
+                data = {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps({"text": "[mock HTTP response]", "evidence_ids": ["e1"], "assumptions": [], "observations": []})}]}]}
                 self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(json.dumps(data).encode())
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -35,7 +35,7 @@ class ModelTransportTests(unittest.TestCase):
         self.assertEqual(result["evidence_ids"], ["e1"])
         request = self.requests[0]
         self.assertFalse(request["body"]["store"])
-        self.assertEqual(request["body"]["text"]["format"]["type"], "json_object")
+        self.assertEqual(request["body"]["text"]["format"]["type"], "json_schema")
         self.assertEqual(request["authorization"], "Bearer test-placeholder")
         self.assertEqual(request["path"], "/v1/responses")
 

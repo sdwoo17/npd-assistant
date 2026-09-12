@@ -92,3 +92,45 @@ class HTTPTests(unittest.TestCase):
         for _ in range(10):
             self.assertEqual(self.request("POST", "/api/login", {"email": "po@example.test", "password": "wrong"})[0], 401)
         self.assertEqual(self.request("POST", "/api/login", {"email": "po@example.test", "password": "wrong"})[0], 429)
+
+    def test_projects_switch_scope_rotates_csrf_and_preserves_roles(self):
+        self.login()
+        old_csrf = self.csrf
+        status, new, _ = self.request('POST', '/api/projects', {'title': 'PO 개인 기획'})
+        self.assertEqual(status, 201)
+        status, switched, _ = self.request('POST', '/api/projects/switch', {'project_id': new['id']})
+        self.assertEqual(status, 201)
+        self.assertNotEqual(switched['csrf'], old_csrf)
+        self.assertEqual(self.request('POST', '/api/conversations', {'title': 'stale csrf'})[0], 403)
+        self.csrf = switched['csrf']
+        boot = self.request('GET', '/api/bootstrap')[1]
+        self.assertEqual(boot['user']['role'], 'owner')
+        self.assertEqual(self.request('GET', '/api/evidence')[1], [])
+        self.assertEqual(self.request('GET', '/api/research/raw/' + self.f.source['id'])[0], 404)
+        self.assertEqual(self.request('POST', '/api/projects/switch', {'project_id': 'project-b'})[0], 403)
+        _, back, _ = self.request('POST', '/api/projects/switch', {'project_id': 'project-a'})
+        self.csrf = back['csrf']
+        self.assertEqual(self.request('GET', '/api/bootstrap')[1]['user']['role'], 'po')
+        self.assertEqual(self.request('GET', '/api/research')[0], 403)
+
+    def test_malformed_input_matrix_always_returns_safe_client_error(self):
+        self.login()
+        cases = [('/api/chat', {'conversation_id': []}), ('/api/voc/analysis', {'filters': []}),
+                 ('/api/conversations', {'title': {}}), ('/api/projects', {'title': '<x>' * 100}),
+                 ('/api/personas', {'name': 'x', 'segment': []}), ('/api/search', {'query': '소재', 'filters': {'date_from': '2025-02-29'}})]
+        for path, body in cases:
+            with self.subTest(path=path):
+                status, result, _ = self.request('POST', path, body)
+                self.assertTrue(400 <= status < 500, (status, result))
+                self.assertNotIn(CANARY, json.dumps(result))
+
+    def test_multi_project_foreign_identifiers_across_read_and_write_routes(self):
+        self.login()
+        other_conv = self.f.service.create_conversation(self.f.other, {'title': 'foreign secret'})
+        for path in ('/api/conversations/', '/api/export/'):
+            self.assertEqual(self.request('GET', path + other_conv['id'])[0], 404)
+        self.assertEqual(self.request('GET', '/api/prds/versions/' + other_conv['prd_id'])[0], 404)
+        for path, body in [('/api/chat', {'conversation_id': other_conv['id'], 'message': '소재'}),
+                           ('/api/proposals', {'conversation_id': other_conv['id']}),
+                           ('/api/conversations/state', {'conversation_id': other_conv['id'], 'expected_version': 1, 'mode': 'research'})]:
+            self.assertEqual(self.request('POST', path, body)[0], 404)

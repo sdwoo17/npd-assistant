@@ -2,9 +2,10 @@
 import argparse
 import base64
 import getpass
+import json
 import os
 from pathlib import Path
-from app.model import Model
+from app.model import create_model
 from app.server import Server
 from app.service import Service
 from app.store import Store
@@ -20,7 +21,8 @@ def seed(store):
     owner_id = store.create_user("owner@example.test", "Owner-demo-2026!", "owner", project)
     store.create_user("po@example.test", "Planner-demo-2026!", "po", project)
     user = {"id": owner_id, "role": "owner", "project_id": project}
-    service = Service(store, Model())
+    service = Service(store, create_model())
+    service.import_features(user, json.loads((ROOT / "samples/features.json").read_text()))
     raw = (ROOT / "samples" / "research.md").read_bytes()
     source = service.post(user, "/api/research/upload", {"title": "가상 리테일미디어 리서치", "filename": "research.md", "content_base64": base64.b64encode(raw).decode()})
     claims = [
@@ -30,21 +32,24 @@ def seed(store):
     ]
     evidence_ids = []
     for title, claim, feature in claims:
-        insight = service.post(user, "/api/insights", {"source_id": source["id"], "title": title, "text": claim, "feature": feature})
+        insight = service.post(user, "/api/insights", {"source_id": source["id"], "title": title, "text": claim, "feature": feature, "evidence_type": "synthetic"})
         service.post(user, "/api/insights/release", {"insight_id": insight["id"], "published": True})
-        store.update(project, "insight", insight["id"], {"evidence_type": "synthetic"})
         evidence_ids.append(insight["id"])
     baseline = service.post(user, "/api/research/upload", {"title": "가상 기존 리포트 기획서 v0.1", "filename": "existing_service_prd.md", "content_base64": base64.b64encode((ROOT / "samples/existing_service_prd.md").read_bytes()).decode()})
-    summary = service.post(user, "/api/insights", {"source_id": baseline["id"], "title": "기존 리포트의 가상 기획 공백", "text": "합성 기획서 SYN-BASE-PRD-001 v0.1에서는 기간·캠페인·소재 필터, 성과 지표와 CSV를 제공한다고 가정한다. 비교 조건 해석·판단 보류·다음 실험 제안은 신규 기획 대상이다. 실제 쿠팡애즈 기능을 설명하는 자료가 아니다.", "feature": "reporting"})
+    summary = service.post(user, "/api/insights", {"source_id": baseline["id"], "title": "기존 리포트의 가상 기획 공백", "text": "합성 기획서 SYN-BASE-PRD-001 v0.1에서는 기간·캠페인·소재 필터, 성과 지표와 CSV를 제공한다고 가정한다. 비교 조건 해석·판단 보류·다음 실험 제안은 신규 기획 대상이다. 실제 쿠팡애즈 기능을 설명하는 자료가 아니다.", "feature": "reporting", "evidence_type": "synthetic"})
     service.post(user, "/api/insights/release", {"insight_id": summary["id"], "published": True})
-    store.update(project, "insight", summary["id"], {"evidence_type": "synthetic"})
     service.post(user, "/api/voc/upload", {"filename": "voc.csv", "source_name": "synthetic-fixture", "content_base64": base64.b64encode((ROOT / "samples/voc.csv").read_bytes()).decode()})
+    voc = service.voc_records(project)
     for name, segment, goals, constraints, eid in [
         ("소규모광고주", "전담 분석가가 없는 소규모 광고주", "광고비를 낭비하지 않고 효과가 있는 소재를 이해하고 싶다.", "분석 시간과 표본이 적고 통계 해석 경험이 적다.", evidence_ids[1]),
         ("대행사운영자", "복수 광고주를 관리하는 대행사 운영자", "추천 근거를 고객에게 설명하고 승인을 빠르게 받고 싶다.", "여러 계정의 자료를 모아 보고하며 변경 승인 절차가 필요하다.", evidence_ids[2]),
+        ("브랜드마케터", "브랜드 마케터", "비교 조건을 검토해 다음 소재 실험을 결정하고 싶다.", "프로모션과 타깃 차이를 분리하기 어렵다.", evidence_ids[0]),
     ]:
-        service.post(user, "/api/personas", {"name": name, "segment": segment, "goals": goals, "constraints": constraints, "assumptions": "공개 가상 데이터로 직접 설정한 테스트 페르소나. 실제 인터뷰 대상 아님.", "evidence_ids": [eid]})
-    service.post(user, "/api/conversations", {"title": "소재 분석 서비스 기획", "mode": "research"})
+        linked = next((v for v in voc if v["segment"] in segment), voc[0])
+        insight = next(e for e in service.knowledge(project) if e["id"] == eid)
+        service.post(user, "/api/personas", {"name": name, "segment": segment, "goals": goals, "constraints": constraints, "assumptions": "공개 가상 데이터로 직접 설정한 테스트 페르소나. 실제 인터뷰 대상 아님.", "evidence_ids": [eid, linked["id"]], "observations": [{"evidence_id": eid, "quote": insight["text"]}, {"evidence_id": linked["id"], "quote": linked["text"]}]})
+    prd = service.import_prd(user, {"title": "소재 분석 리포트 개선 · 기준 PRD", "filename": "existing_service_prd.md", "content_base64": base64.b64encode((ROOT / "samples/existing_service_prd.md").read_bytes()).decode()})
+    service.post(user, "/api/conversations", {"title": "소재 분석 서비스 기획", "mode": "research", "prd_id": prd["id"]})
     (store.directory / "demo-mode").write_text("local synthetic demo only")
     print("가상 샘플 초기화 완료. 로컬 데모 전용 계정:")
     print("owner@example.test / Owner-demo-2026!")
@@ -54,6 +59,8 @@ def seed(store):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["demo", "init", "serve"])
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--origin", help="Browser-visible origin; required behind a reverse proxy")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--data-dir", default=os.environ.get("NPD_DATA_DIR", str(ROOT / "runtime")))
     args = parser.parse_args()
@@ -73,8 +80,9 @@ def main():
     with store.db() as db:
         if not db.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
             raise SystemExit("먼저 python manage.py demo 또는 python manage.py init을 실행하세요.")
-    service = Service(store, Model())
-    server = Server(("127.0.0.1", args.port), service)
+    service = Service(store, create_model())
+    store.recover_jobs()
+    server = Server((args.host, args.port), service, origin=args.origin)
     print(f"NPD Assistant: {server.origin} | AI 모델: {'연결 설정됨' if service.model.configured else '미설정'}", flush=True)
     try:
         server.serve_forever()

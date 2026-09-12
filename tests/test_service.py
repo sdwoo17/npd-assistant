@@ -99,9 +99,10 @@ class ServiceTests(unittest.TestCase):
 
     def test_unknown_question_has_no_invented_citation(self):
         conv = self.f.conversation()
-        with self.assertRaises(AppError) as caught:
-            self.s.post(self.po, "/api/chat", {"conversation_id": conv["id"], "message": "qwertyxyz"})
-        self.assertEqual(caught.exception.status, 409)
+        result = self.s.post(self.po, "/api/chat", {"conversation_id": conv["id"], "message": "qwertyxyz"})
+        self.assertEqual(result["messages"][-1]["status"], "no_evidence")
+        self.assertEqual(result["messages"][-1]["evidence_ids"], [])
+        self.assertIsNone(result["messages"][-1]["model"])
         self.assertEqual(self.f.model.calls, [])
 
     def test_invalid_model_citation_not_persisted(self):

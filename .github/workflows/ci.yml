@@ -7,7 +7,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -17,8 +17,25 @@ jobs:
         with:
           node-version: '22'
       - run: python -m pip install -r requirements.txt
-      - run: python -m unittest discover -s tests -v
-      - run: python -m compileall -q app manage.py
-      - run: node --check static/app.js
       - run: npm ci --ignore-scripts
-      - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: python -m compileall -q app manage.py scripts
+      - run: node --check static/app.js
+      - run: python scripts/regression.py --passes 3 --browser
+      - name: Build container and verify local HTTP startup
+        run: |
+          docker build -t npd-assistant:ci .
+          docker volume create npd-ci-data
+          docker run --rm -v npd-ci-data:/data npd-assistant:ci demo
+          docker run -d --name npd-ci -p 127.0.0.1:8765:8765 -v npd-ci-data:/data npd-assistant:ci
+          python scripts/container_smoke.py
+      - name: Cleanup container
+        if: always()
+        run: |
+          docker rm -f npd-ci || true
+          docker volume rm npd-ci-data || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: regression-results
+          path: test-results/

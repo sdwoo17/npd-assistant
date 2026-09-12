@@ -1,0 +1,42 @@
+{
+  "features": [
+    {
+      "key": "creative_comparability",
+      "name": "소재 비교 조건",
+      "service_id": "advertiser_portal",
+      "parent_feature_id": "creative_test",
+      "terms": [
+        "동일 조건",
+        "쿠폰",
+        "프로모션",
+        "타깃 차이",
+        "지면 차이"
+      ]
+    },
+    {
+      "key": "creative_uncertainty",
+      "name": "판단 보류와 불확실성",
+      "service_id": "advertiser_portal",
+      "parent_feature_id": "creative_test",
+      "terms": [
+        "모수가 적",
+        "통계",
+        "판단 보류",
+        "신뢰구간",
+        "데이터 부족"
+      ]
+    },
+    {
+      "key": "creative_explanation",
+      "name": "추천 이유와 다음 실험",
+      "service_id": "advertiser_portal",
+      "parent_feature_id": "creative_test",
+      "terms": [
+        "추천 이유",
+        "다음 행동",
+        "왜 추천",
+        "대안 소재"
+      ]
+    }
+  ]
+}

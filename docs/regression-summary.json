@@ -1,0 +1,126 @@
+{
+  "seed_range": [
+    0,
+    19
+  ],
+  "csv_rows_per_python_pass": 1000,
+  "state_transitions_per_python_pass": 300,
+  "runs": [
+    {
+      "pass": 1,
+      "command": [
+        "python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "seconds": 16.013,
+      "returncode": 0,
+      "log": "pass-1-suite-1.log"
+    },
+    {
+      "pass": 1,
+      "command": [
+        "node",
+        "--test",
+        "tests/ui_flow.cjs"
+      ],
+      "seconds": 5.905,
+      "returncode": 0,
+      "log": "pass-1-suite-2.log"
+    },
+    {
+      "pass": 1,
+      "command": [
+        "node",
+        "--test",
+        "tests/browser_flow.cjs"
+      ],
+      "seconds": 7.136,
+      "returncode": 0,
+      "log": "pass-1-suite-3.log"
+    },
+    {
+      "pass": 2,
+      "command": [
+        "python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "seconds": 17.512,
+      "returncode": 0,
+      "log": "pass-2-suite-1.log"
+    },
+    {
+      "pass": 2,
+      "command": [
+        "node",
+        "--test",
+        "tests/ui_flow.cjs"
+      ],
+      "seconds": 2.176,
+      "returncode": 0,
+      "log": "pass-2-suite-2.log"
+    },
+    {
+      "pass": 2,
+      "command": [
+        "node",
+        "--test",
+        "tests/browser_flow.cjs"
+      ],
+      "seconds": 5.062,
+      "returncode": 0,
+      "log": "pass-2-suite-3.log"
+    },
+    {
+      "pass": 3,
+      "command": [
+        "python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "seconds": 15.895,
+      "returncode": 0,
+      "log": "pass-3-suite-1.log"
+    },
+    {
+      "pass": 3,
+      "command": [
+        "node",
+        "--test",
+        "tests/ui_flow.cjs"
+      ],
+      "seconds": 2.744,
+      "returncode": 0,
+      "log": "pass-3-suite-2.log"
+    },
+    {
+      "pass": 3,
+      "command": [
+        "node",
+        "--test",
+        "tests/browser_flow.cjs"
+      ],
+      "seconds": 4.99,
+      "returncode": 0,
+      "log": "pass-3-suite-3.log"
+    }
+  ],
+  "python_tests_per_pass": 85,
+  "dom_tests_per_pass": 2,
+  "chromium_tests_per_pass": 4,
+  "live_model": "SKIPPED: model ID/credentials absent",
+  "date": "2026-09-12"
+}

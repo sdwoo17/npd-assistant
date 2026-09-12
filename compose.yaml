@@ -1,0 +1,21 @@
+services:
+  npd:
+    build: .
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - npd-data:/data
+    environment:
+      NPD_MODEL_PROVIDER: ${NPD_MODEL_PROVIDER:-bedrock}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-}
+      BEDROCK_OUTPUT_MODE: ${BEDROCK_OUTPUT_MODE:-json_schema}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      APP_STORE_CONNECT_TOKEN: ${APP_STORE_CONNECT_TOKEN:-}
+    restart: unless-stopped
+volumes:
+  npd-data:
