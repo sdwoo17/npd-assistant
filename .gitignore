@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+runtime/
+*.sqlite*
+*.key
+uploads/
+coverage/
+node_modules/
+.DS_Store
