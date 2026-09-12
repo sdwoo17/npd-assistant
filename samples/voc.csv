@@ -1,0 +1,7 @@
+external_id,text,feature,segment,occurred_at,evidence_type
+SYN-001,"소재를 바꾸고 쿠폰도 시작했어요. 어느 쪽 때문에 클릭이 늘었는지 모르겠어요.",creative_test,소규모 광고주,2026-09-01,synthetic
+SYN-002,"광고 예산이 적어서 실험 결과를 언제 믿어도 되는지 모르겠어요.",budget,소규모 광고주,2026-09-02,synthetic
+SYN-003,"소재 B의 클릭은 늘었는데 광고비가 더 들어 수익이 나아졌는지 모르겠어요.",reporting,브랜드 마케터,2026-09-03,synthetic
+SYN-004,"리포트를 엑셀로 모아 고객에게 보내고 변경 승인을 기다립니다.",workflow,대행사 운영자,2026-09-04,synthetic
+SYN-005,"추천 근거를 알려주면 좋겠어요. 제가 이해할 수 있어야 적용할 수 있어요.",reporting,소규모 광고주,2026-09-05,synthetic
+SYN-006,"표본이 적다는 이유로 판단을 보류하면 다음에 무엇을 해야 하는지 알려주세요.",creative_test,소규모 광고주,2026-09-06,synthetic
