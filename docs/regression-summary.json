@@ -17,7 +17,7 @@
         "tests",
         "-v"
       ],
-      "seconds": 21.696,
+      "seconds": 22.64,
       "returncode": 0,
       "log": "pass-1-suite-1.log"
     },
@@ -28,7 +28,7 @@
         "--test",
         "tests/ui_flow.cjs"
       ],
-      "seconds": 2.029,
+      "seconds": 2.277,
       "returncode": 0,
       "log": "pass-1-suite-2.log"
     },
@@ -39,7 +39,7 @@
         "--test",
         "tests/browser_flow.cjs"
       ],
-      "seconds": 5.189,
+      "seconds": 6.168,
       "returncode": 0,
       "log": "pass-1-suite-3.log"
     },
@@ -54,7 +54,7 @@
         "tests",
         "-v"
       ],
-      "seconds": 21.631,
+      "seconds": 22.87,
       "returncode": 0,
       "log": "pass-2-suite-1.log"
     },
@@ -65,7 +65,7 @@
         "--test",
         "tests/ui_flow.cjs"
       ],
-      "seconds": 2.022,
+      "seconds": 1.927,
       "returncode": 0,
       "log": "pass-2-suite-2.log"
     },
@@ -76,7 +76,7 @@
         "--test",
         "tests/browser_flow.cjs"
       ],
-      "seconds": 4.839,
+      "seconds": 5.645,
       "returncode": 0,
       "log": "pass-2-suite-3.log"
     },
@@ -91,7 +91,7 @@
         "tests",
         "-v"
       ],
-      "seconds": 21.514,
+      "seconds": 21.738,
       "returncode": 0,
       "log": "pass-3-suite-1.log"
     },
@@ -102,7 +102,7 @@
         "--test",
         "tests/ui_flow.cjs"
       ],
-      "seconds": 1.977,
+      "seconds": 2.023,
       "returncode": 0,
       "log": "pass-3-suite-2.log"
     },
@@ -113,7 +113,7 @@
         "--test",
         "tests/browser_flow.cjs"
       ],
-      "seconds": 5.154,
+      "seconds": 6.101,
       "returncode": 0,
       "log": "pass-3-suite-3.log"
     }

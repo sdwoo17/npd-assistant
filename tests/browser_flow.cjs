@@ -63,6 +63,37 @@ async function nav(page, name) {
   await page.locator("#page-" + name).waitFor({ state: "visible" });
 }
 
+test("browser: eight stored personas keep the desktop composer within reach", async () => {
+  const { ctx, page, errors } = await login("po");
+  try {
+    await page.evaluate(async () => {
+      const boot = await (await fetch("/api/bootstrap")).json();
+      const evidence = await (await fetch("/api/evidence")).json();
+      for (let i = boot.personas.length; i < 8; i++) {
+        const response = await fetch("/api/personas", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": boot.user.csrf },
+          body: JSON.stringify({ name: "화면검증광고주" + i, segment: "긴 업무 제약을 가진 가상 광고주",
+            goals: "소재 리포트 이해", constraints: "복수 계정과 승인 업무", assumptions: ["합성 UI 검증"],
+            evidence_ids: [evidence[0].id] }),
+        });
+        if (!response.ok) throw new Error("Persona setup failed");
+      }
+    });
+    await page.reload();
+    await page.locator("#workspace").waitFor({ state: "visible" });
+    await page.waitForFunction(() => document.querySelectorAll("#chat-personas button").length === 8);
+    const bounds = await page.locator("#send-message").boundingBox();
+    assert.ok(bounds.y + bounds.height <= 1000, "Eight personas must not push the composer below the viewport");
+    assert.ok(await page.locator(".evidence-panel").evaluate((el) => el.scrollHeight > el.clientHeight));
+    await page.locator("#make-debrief").scrollIntoViewIfNeeded();
+    assert.ok(await page.locator("#make-debrief").isVisible());
+    assert.deepEqual(errors, []);
+  } finally {
+    await ctx.close();
+  }
+});
+
 test("browser: PO decisions, group challenge, debrief, real PRD version and Markdown download", async () => {
   const { ctx, page, errors } = await login("po");
   try {

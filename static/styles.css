@@ -346,6 +346,7 @@ main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 285px;
   gap: 22px;
+  align-items: start;
 }
 .chat-panel {
   background: #fff;
@@ -766,6 +767,27 @@ footer {
 }
 [hidden] {
   display: none !important;
+}
+@media (min-width: 1101px) {
+  .chat-panel {
+    min-height: 560px;
+    height: max(560px, calc(100dvh - 300px));
+  }
+  .chat-panel .messages {
+    height: auto;
+    min-height: 120px;
+    flex: 1 1 0;
+  }
+  .chat-toolbar,
+  .composer,
+  .new-conversation {
+    flex-shrink: 0;
+  }
+  .evidence-panel {
+    max-height: max(560px, calc(100dvh - 300px));
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
 }
 @media (min-width: 1500px) {
   .chat-layout {
