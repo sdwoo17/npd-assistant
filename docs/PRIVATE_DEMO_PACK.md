@@ -1,0 +1,38 @@
+# 별도 비공개 데모 자산 가져오기
+
+공개 코드와 소유자 리서치 파일을 분리한다. `scripts/import_demo_pack.py`는 별도로 받은 자산 폴더를 **새 로컬 데이터 폴더**에 적재한다. 리서치 원문·고객 로그·키·DB는 이 저장소에 커밋하지 않는다.
+
+```bash
+python scripts/import_demo_pack.py --assets /path/to/private-pack --data-dir /path/to/new-data --demo-credentials --publish-insights
+python manage.py serve --data-dir /path/to/new-data
+```
+
+`--publish-insights`는 소유자가 인사이트 JSON의 내용을 검토하고 공유를 승인하는 옵션이다. 생략하면 비공개 초안으로 유지하고 페르소나 생성을 보류한다. 원문은 어느 경우든 PO 지식에 포함되지 않는다. `--demo-credentials`는 README의 로컬 데모 계정을 사용한다. 생략하면 이메일과 비밀번호를 입력받는다.
+
+기존 데이터 폴더가 있으면 덮어쓰지 않고 실패한다. 임시 DB에 전체 적재를 완료한 뒤 새 환경으로 설치하므로 잘못된 참조·중복 ID·잘못된 CSV·페르소나 충돌 때문에 반쪽짜리 데모 DB가 설치되지 않는다. 파일 경로는 자산 폴더 안에서만 읽으며 외부로 향하는 심볼릭 링크도 거부한다. 이 도구는 기존 프로젝트 병합·운영 마이그레이션용이 아니다.
+
+## 매니페스트
+
+`manifest.json`의 `schema_version`은 `npd.demo-pack.v1`, `synthetic_voc_only`는 `true`이다. `pack_id`는 고유한 자산 버전명이다.
+
+| 항목 | 형식 |
+| --- | --- |
+| research | `{file, title}`: 소유자 원문 파일 |
+| features | 기능 트리 JSON의 상대 경로. `/api/features/import` 형식 |
+| insights | 인사이트 배열 JSON. 각 항목은 고유 `key`와 `/api/insights`의 내용 필드 |
+| voc | `[{file, source_name}]`: 채널별 UTF-8 CSV, 최대 10개 파일 |
+| personas | 최대 8개 프로필 배열. 각 프로필에 `key`, `name`, `segment`, `goals`, `constraints`, `assumptions`, `insights` 키 참조, `voc_refs` 외부 ID 참조 |
+| prd | `{title, sections:[{id,title,text}]}` JSON |
+| annotations | 선택. `{records:[{external_id, feature_ids}]}` JSON. 모든 VoC와 정확히 대응 |
+
+각 페르소나는 리서치와 VoC를 모두 참조해야 한다. 인사이트 공유 후 실제 서비스의 페르소나 저장 경로를 통해 관찰 인용·근거 버전·합성 여부를 연결한다. 합성 VoC를 실제 고객 자료로 가져오려 하면 전체 설치를 거부한다. 외부 ID는 채널 간에도 고유해야 한다.
+
+기능 주석은 작성자가 승인한 데모 시드다. AI 분류 성과로 계산하지 않는다. 무라벨 분류를 검증하려면 별도 프로젝트에 무라벨 CSV를 업로드하고 AI 분류 결과를 독립적으로 평가한다. 같은 사건의 여러 채널 기록은 외부 ID가 달라도 독립 고객 수가 아니다.
+
+## 실행 범위
+
+가져오기는 모델을 호출하지 않는다. 실제 AI 채팅·추출·분류·새 페르소나 생성·FGI·디브리프·PRD 변경안에는 제공자 설정이 필요하다. 저장된 페르소나는 실제 레코드이며 대화에 초기 인터뷰 답변을 삽입하지 않는다. 테스트 대역은 `tests/`에만 있다.
+
+임포트 결과의 내부 ID 매핑은 비공개 데이터 폴더의 `demo-import.json`에 저장한다. 전체 리서치나 비밀번호를 출력하지 않는다. PO용 대화 두 개(리서치, 인터뷰)와 기준 PRD를 연결해 생성하며, 데이터베이스와 원문 암호화 키는 해당 비공개 폴더에만 남는다.
+
+`tests/test_demo_assets.py`는 직접 작성한 독립 합성 자료만 이용해 기본 비공개 상태, 8명 태그 FGI와 실제 PRD v2, 기존 데이터 보존, 잘못된 자산의 반복 실패·정리, 권한 및 경로 경계를 검증한다. 별도 고객 자산 자체는 CI나 공개 테스트 픽스처에 포함되지 않는다.

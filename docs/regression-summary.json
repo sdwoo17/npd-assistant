@@ -9,7 +9,7 @@
     {
       "pass": 1,
       "command": [
-        "python",
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
         "-m",
         "unittest",
         "discover",
@@ -17,7 +17,7 @@
         "tests",
         "-v"
       ],
-      "seconds": 16.013,
+      "seconds": 21.696,
       "returncode": 0,
       "log": "pass-1-suite-1.log"
     },
@@ -28,7 +28,7 @@
         "--test",
         "tests/ui_flow.cjs"
       ],
-      "seconds": 5.905,
+      "seconds": 2.029,
       "returncode": 0,
       "log": "pass-1-suite-2.log"
     },
@@ -39,14 +39,14 @@
         "--test",
         "tests/browser_flow.cjs"
       ],
-      "seconds": 7.136,
+      "seconds": 5.189,
       "returncode": 0,
       "log": "pass-1-suite-3.log"
     },
     {
       "pass": 2,
       "command": [
-        "python",
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
         "-m",
         "unittest",
         "discover",
@@ -54,7 +54,7 @@
         "tests",
         "-v"
       ],
-      "seconds": 17.512,
+      "seconds": 21.631,
       "returncode": 0,
       "log": "pass-2-suite-1.log"
     },
@@ -65,7 +65,7 @@
         "--test",
         "tests/ui_flow.cjs"
       ],
-      "seconds": 2.176,
+      "seconds": 2.022,
       "returncode": 0,
       "log": "pass-2-suite-2.log"
     },
@@ -76,14 +76,14 @@
         "--test",
         "tests/browser_flow.cjs"
       ],
-      "seconds": 5.062,
+      "seconds": 4.839,
       "returncode": 0,
       "log": "pass-2-suite-3.log"
     },
     {
       "pass": 3,
       "command": [
-        "python",
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
         "-m",
         "unittest",
         "discover",
@@ -91,7 +91,7 @@
         "tests",
         "-v"
       ],
-      "seconds": 15.895,
+      "seconds": 21.514,
       "returncode": 0,
       "log": "pass-3-suite-1.log"
     },
@@ -102,7 +102,7 @@
         "--test",
         "tests/ui_flow.cjs"
       ],
-      "seconds": 2.744,
+      "seconds": 1.977,
       "returncode": 0,
       "log": "pass-3-suite-2.log"
     },
@@ -113,14 +113,9 @@
         "--test",
         "tests/browser_flow.cjs"
       ],
-      "seconds": 4.99,
+      "seconds": 5.154,
       "returncode": 0,
       "log": "pass-3-suite-3.log"
     }
-  ],
-  "python_tests_per_pass": 85,
-  "dom_tests_per_pass": 2,
-  "chromium_tests_per_pass": 4,
-  "live_model": "SKIPPED: model ID/credentials absent",
-  "date": "2026-09-12"
+  ]
 }
