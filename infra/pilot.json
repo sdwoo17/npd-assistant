@@ -1,0 +1,354 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Restricted single-instance NPD Bedrock pilot. Existing VPC/DNS/certificate/Secret/model permissions required. No HA claim.",
+  "Parameters": {
+    "VpcId": {
+      "Type": "AWS::EC2::VPC::Id",
+      "Description": "Existing VPC with an internet gateway"
+    },
+    "PublicSubnetIds": {
+      "Type": "List<AWS::EC2::Subnet::Id>",
+      "Description": "At least two public subnets in distinct availability zones; first hosts the instance"
+    },
+    "DomainName": {
+      "Type": "String",
+      "AllowedPattern": "[a-z0-9][a-z0-9.-]{1,200}[a-z0-9]",
+      "Description": "DNS name matching the supplied ACM certificate"
+    },
+    "CertificateArn": {
+      "Type": "String",
+      "AllowedPattern": "arn:aws:acm:[a-z0-9-]+:[0-9]{12}:certificate/[A-Za-z0-9-]+",
+      "Description": "Issued ACM certificate in the deployment region"
+    },
+    "CustomerCidr": {
+      "Type": "String",
+      "AllowedPattern": "([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}",
+      "Description": "Customer office/VPN IPv4 CIDR allowed to connect over HTTPS"
+    },
+    "BootstrapSecretArn": {
+      "Type": "String",
+      "AllowedPattern": "arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+",
+      "Description": "Existing regional Secret, AWS-managed encryption key; JSON owner/po email,password (16+ chars)"
+    },
+    "BedrockModelId": {
+      "Type": "String",
+      "AllowedPattern": "[A-Za-z0-9._:/-]+",
+      "Description": "Converse model ID or inference profile ID/ARN accessible from this region"
+    },
+    "BedrockResourceArns": {
+      "Type": "CommaDelimitedList",
+      "AllowedPattern": "arn:aws:bedrock:[a-z0-9-]+:[0-9]*:[A-Za-z0-9._:/-]+",
+      "Description": "Exact foundation model and inference profile ARNs required for InvokeModel, including all destination regions"
+    },
+    "BedrockOutputMode": {
+      "Type": "String",
+      "AllowedValues": [
+        "json_schema",
+        "tool",
+        "strict_tool"
+      ],
+      "Default": "json_schema"
+    },
+    "CodeCommit": {
+      "Type": "String",
+      "AllowedPattern": "[a-f0-9]{40}",
+      "Description": "Verified immutable commit in sdwoo17/npd-assistant; includes pilot bootstrap scripts"
+    },
+    "InstanceType": {
+      "Type": "String",
+      "AllowedValues": [
+        "t3.small",
+        "t3.medium"
+      ],
+      "Default": "t3.small"
+    },
+    "ImageId": {
+      "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+      "Default": "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+    }
+  },
+  "Resources": {
+    "WebSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Restricted customer HTTPS",
+        "VpcId": {
+          "Ref": "VpcId"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": {
+              "Ref": "CustomerCidr"
+            }
+          }
+        ]
+      }
+    },
+    "AppSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "App traffic only from ALB; no SSH",
+        "VpcId": {
+          "Ref": "VpcId"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8765,
+            "ToPort": 8765,
+            "SourceSecurityGroupId": {
+              "Ref": "WebSecurityGroup"
+            }
+          }
+        ]
+      }
+    },
+    "RuntimeRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ec2.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "NpdRuntime",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "bedrock:InvokeModel"
+                  ],
+                  "Resource": {
+                    "Ref": "BedrockResourceArns"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "secretsmanager:GetSecretValue"
+                  ],
+                  "Resource": {
+                    "Ref": "BootstrapSecretArn"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:SignalResource"
+                  ],
+                  "Resource": {
+                    "Ref": "AWS::StackId"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "InstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Roles": [
+          {
+            "Ref": "RuntimeRole"
+          }
+        ]
+      }
+    },
+    "Host": {
+      "Type": "AWS::EC2::Instance",
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Count": 1,
+          "Timeout": "PT20M"
+        }
+      },
+      "Properties": {
+        "ImageId": {
+          "Ref": "ImageId"
+        },
+        "InstanceType": {
+          "Ref": "InstanceType"
+        },
+        "IamInstanceProfile": {
+          "Ref": "InstanceProfile"
+        },
+        "NetworkInterfaces": [
+          {
+            "DeviceIndex": "0",
+            "AssociatePublicIpAddress": true,
+            "SubnetId": {
+              "Fn::Select": [
+                0,
+                {
+                  "Ref": "PublicSubnetIds"
+                }
+              ]
+            },
+            "GroupSet": [
+              {
+                "Ref": "AppSecurityGroup"
+              }
+            ]
+          }
+        ],
+        "MetadataOptions": {
+          "HttpTokens": "required",
+          "HttpPutResponseHopLimit": 1
+        },
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "VolumeSize": 40,
+              "VolumeType": "gp3",
+              "Encrypted": true,
+              "DeleteOnTermination": false
+            }
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Sub": "#!/bin/bash\nset -euo pipefail\numask 027\ndnf install -y python3.12 python3.12-pip git aws-cfn-bootstrap\ntrap '/opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource Host --region ${AWS::Region}' EXIT\nuseradd --system --create-home npd\ninstall -d -o npd -g npd -m 0700 /var/lib/npd\ninstall -d -m 0755 /opt/npd\ngit clone --no-checkout https://github.com/sdwoo17/npd-assistant.git /opt/npd/code\ngit -C /opt/npd/code checkout --detach ${CodeCommit}\ntest \"$(git -C /opt/npd/code rev-parse HEAD)\" = \"${CodeCommit}\"\npython3.12 -m venv /opt/npd/venv\n/opt/npd/venv/bin/python -m pip install -r /opt/npd/code/requirements.txt\nchown -R root:npd /opt/npd\ncat > /etc/npd-environment <<'EOF'\nAWS_REGION=${AWS::Region}\nNPD_MODEL_PROVIDER=bedrock\nBEDROCK_MODEL_ID=${BedrockModelId}\nBEDROCK_OUTPUT_MODE=${BedrockOutputMode}\nNPD_DATA_DIR=/var/lib/npd/runtime\nNPD_REQUIRE_MODEL=1\nPYTHONDONTWRITEBYTECODE=1\nPYTHONUNBUFFERED=1\nEOF\nchown root:npd /etc/npd-environment\nchmod 0640 /etc/npd-environment\nrunuser -u npd -- env AWS_REGION=${AWS::Region} /opt/npd/venv/bin/python /opt/npd/code/scripts/bootstrap_pilot.py --data-dir /var/lib/npd/runtime --secret-id '${BootstrapSecretArn}' --region '${AWS::Region}'\ncat > /etc/systemd/system/npd.service <<'EOF'\n[Unit]\nDescription=NPD Assistant restricted Bedrock pilot\nAfter=network-online.target\nWants=network-online.target\nStartLimitIntervalSec=1200\nStartLimitBurst=3\n[Service]\nType=simple\nUser=npd\nGroup=npd\nWorkingDirectory=/opt/npd/code\nEnvironmentFile=/etc/npd-environment\nExecStart=/opt/npd/venv/bin/python /opt/npd/code/manage.py serve --host 0.0.0.0 --origin https://${DomainName} --data-dir /var/lib/npd/runtime --require-model\nRestart=on-failure\nRestartSec=30\nTimeoutStopSec=30\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths=/var/lib/npd\nUMask=0077\n[Install]\nWantedBy=multi-user.target\nEOF\nsystemctl daemon-reload\nsystemctl enable --now npd\n# Serving starts only after a real model probe succeeds.\nfor attempt in $(seq 1 300); do\n if curl -fsS http://127.0.0.1:8765/healthz >/dev/null; then exit 0; fi\n sleep 3\ndone\nexit 1\n"
+          }
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${AWS::StackName}-npd-pilot"
+            }
+          },
+          {
+            "Key": "BackupRequired",
+            "Value": "true"
+          }
+        ]
+      }
+    },
+    "LoadBalancer": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Properties": {
+        "Scheme": "internet-facing",
+        "Type": "application",
+        "Subnets": {
+          "Ref": "PublicSubnetIds"
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "WebSecurityGroup"
+          }
+        ],
+        "LoadBalancerAttributes": [
+          {
+            "Key": "idle_timeout.timeout_seconds",
+            "Value": "3600"
+          },
+          {
+            "Key": "routing.http.drop_invalid_header_fields.enabled",
+            "Value": "true"
+          }
+        ]
+      }
+    },
+    "TargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VpcId"
+        },
+        "Protocol": "HTTP",
+        "Port": 8765,
+        "TargetType": "instance",
+        "HealthCheckPath": "/healthz",
+        "Matcher": {
+          "HttpCode": "200"
+        },
+        "Targets": [
+          {
+            "Id": {
+              "Ref": "Host"
+            },
+            "Port": 8765
+          }
+        ]
+      }
+    },
+    "HttpsListener": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "LoadBalancerArn": {
+          "Ref": "LoadBalancer"
+        },
+        "Port": 443,
+        "Protocol": "HTTPS",
+        "SslPolicy": "ELBSecurityPolicy-TLS13-1-2-2021-06",
+        "Certificates": [
+          {
+            "CertificateArn": {
+              "Ref": "CertificateArn"
+            }
+          }
+        ],
+        "DefaultActions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": {
+              "Ref": "TargetGroup"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "CustomerUrl": {
+      "Value": {
+        "Fn::Sub": "https://${DomainName}"
+      }
+    },
+    "DnsCnameTarget": {
+      "Value": {
+        "Fn::GetAtt": [
+          "LoadBalancer",
+          "DNSName"
+        ]
+      },
+      "Description": "Point DomainName to this ALB; certificate and DNS must be ready before customer access"
+    },
+    "InstanceId": {
+      "Value": {
+        "Ref": "Host"
+      }
+    },
+    "RuntimeRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "RuntimeRole",
+          "Arn"
+        ]
+      }
+    },
+    "DataLocation": {
+      "Value": "/var/lib/npd/runtime on encrypted retained root EBS; restore manually after replacement"
+    }
+  }
+}

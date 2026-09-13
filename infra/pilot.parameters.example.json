@@ -1,0 +1,12 @@
+{
+  "VpcId": "vpc-REPLACE",
+  "PublicSubnetIds": "subnet-REPLACE1,subnet-REPLACE2",
+  "DomainName": "npd.your-domain.example",
+  "CertificateArn": "arn:aws:acm:ap-northeast-2:123456789012:certificate/REPLACE",
+  "CustomerCidr": "203.0.113.10/32",
+  "BootstrapSecretArn": "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:npd-pilot-REPLACE",
+  "BedrockModelId": "REPLACE_WITH_ACCESSIBLE_MODEL_OR_PROFILE_ID",
+  "BedrockResourceArns": "arn:aws:bedrock:ap-northeast-2::foundation-model/REPLACE",
+  "BedrockOutputMode": "json_schema",
+  "InstanceType": "t3.small"
+}

@@ -30,6 +30,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
+        if self.server.origin.startswith('https://'):
+            self.send_header('Strict-Transport-Security', 'max-age=31536000')
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
         if cookie:
             self.send_header("Set-Cookie", cookie)
@@ -49,18 +51,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
-            self.check_host()
             route = urlparse(self.path).path
+            if route == "/healthz":
+                # ALB probes use the target IP as Host. This route contains no
+                # project/model information and never authenticates or writes.
+                return self.send(200, {"status": "ok"})
+            self.check_host()
             static = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"), "/styles.css": ("styles.css", "text/css")}
             if route in static:
                 path, mime = static[route]
                 return self.send(200, (ROOT / "static" / path).read_bytes(), mime + "; charset=utf-8")
             if route == "/api/health":
-                return self.send(200, {"status": "ok", "version": "0.1.0"})
+                return self.send(200, {"status": "ok", "version": "0.2.0"})
             _, user = self.context()
-            return self.send(200, self.server.service.get(user, route))
+            return self.send(200, self.server.service.get(user, self.path))
         except AppError as e:
-            self.send(e.status, {"error": str(e)})
+            self.send(e.status, {"error": str(e), **({"code": e.code} if hasattr(e, "code") else {})})
         except Exception:
             self.send(500, {"error": "요청 처리 중 오류가 발생했습니다."})
 
@@ -93,7 +99,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {"ok": True}, cookie="npd_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
             return self.send(201, self.server.service.post(user, route, body))
         except AppError as e:
-            self.send(e.status, {"error": str(e)})
+            self.send(e.status, {"error": str(e), **({"code": e.code} if hasattr(e, "code") else {})})
         except (ValueError, TypeError, KeyError):
             self.send(400, {"error": "입력 형식을 확인하세요."})
         except Exception:

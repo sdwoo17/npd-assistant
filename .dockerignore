@@ -1,0 +1,11 @@
+*
+!app/
+!app/*.py
+!static/
+!static/*
+!samples/
+!samples/*
+!scripts/
+!scripts/*.py
+!manage.py
+!requirements.txt

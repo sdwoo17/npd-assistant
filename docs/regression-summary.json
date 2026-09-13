@@ -1,0 +1,121 @@
+{
+  "seed_range": [
+    0,
+    19
+  ],
+  "csv_rows_per_python_pass": 1000,
+  "state_transitions_per_python_pass": 300,
+  "runs": [
+    {
+      "pass": 1,
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "seconds": 22.64,
+      "returncode": 0,
+      "log": "pass-1-suite-1.log"
+    },
+    {
+      "pass": 1,
+      "command": [
+        "node",
+        "--test",
+        "tests/ui_flow.cjs"
+      ],
+      "seconds": 2.277,
+      "returncode": 0,
+      "log": "pass-1-suite-2.log"
+    },
+    {
+      "pass": 1,
+      "command": [
+        "node",
+        "--test",
+        "tests/browser_flow.cjs"
+      ],
+      "seconds": 6.168,
+      "returncode": 0,
+      "log": "pass-1-suite-3.log"
+    },
+    {
+      "pass": 2,
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "seconds": 22.87,
+      "returncode": 0,
+      "log": "pass-2-suite-1.log"
+    },
+    {
+      "pass": 2,
+      "command": [
+        "node",
+        "--test",
+        "tests/ui_flow.cjs"
+      ],
+      "seconds": 1.927,
+      "returncode": 0,
+      "log": "pass-2-suite-2.log"
+    },
+    {
+      "pass": 2,
+      "command": [
+        "node",
+        "--test",
+        "tests/browser_flow.cjs"
+      ],
+      "seconds": 5.645,
+      "returncode": 0,
+      "log": "pass-2-suite-3.log"
+    },
+    {
+      "pass": 3,
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "seconds": 21.738,
+      "returncode": 0,
+      "log": "pass-3-suite-1.log"
+    },
+    {
+      "pass": 3,
+      "command": [
+        "node",
+        "--test",
+        "tests/ui_flow.cjs"
+      ],
+      "seconds": 2.023,
+      "returncode": 0,
+      "log": "pass-3-suite-2.log"
+    },
+    {
+      "pass": 3,
+      "command": [
+        "node",
+        "--test",
+        "tests/browser_flow.cjs"
+      ],
+      "seconds": 6.101,
+      "returncode": 0,
+      "log": "pass-3-suite-3.log"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "status": "PASS",
+  "provider": "apple_public_rss",
+  "app_id": "454434967",
+  "country": "kr",
+  "first": {
+    "imported": 100,
+    "duplicates": 0,
+    "pages": 2,
+    "has_more": true
+  },
+  "repeat": {
+    "imported": 0,
+    "duplicates": 100,
+    "pages": 2
+  },
+  "all_have_external_id": true,
+  "all_have_date": true,
+  "seconds": 39.926,
+  "scope": "Public shopping-app users; advertiser identity and representativeness NOT verified. Bodies and identifiers not retained."
+}
