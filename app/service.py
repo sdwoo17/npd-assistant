@@ -1,6 +1,7 @@
 """Framework-neutral application service. Authentication scope comes only from the server."""
 import json
 import threading
+import time
 from urllib.parse import urlparse, parse_qs
 from .contracts import text, strings, filters, dependency_map
 from .ingest import FEATURES, retrieve
@@ -21,14 +22,38 @@ class Service(Research, Voc, Planning, Chat):
         self._locks = {}
         self._lock_guard = threading.Lock()
         self._last_model_success = None
+        self._model_probe_lock = threading.Lock()
+        self._next_model_probe = 0
 
     def audit(self, user, action, rid):
         self.store.put(user["project_id"], "audit", {"actor_id": user["id"], "action": action, "record_id": rid})
 
     def generate(self, task, payload):
-        result = validate(task, self.model.generate(task, payload))
+        try:
+            result = validate(task, self.model.generate(task, payload))
+        except Exception:
+            self._last_model_success = None
+            raise
         self._last_model_success = timestamp()
         return result
+
+    def test_model(self, user, body):
+        owner(user)
+        if getattr(self.model, "provider", None) != "bedrock":
+            raise AppError("서버를 Bedrock 제공자로 설정한 후 테스트하세요.", 503)
+        if not self._model_probe_lock.acquire(blocking=False):
+            raise AppError("Bedrock 연결 테스트가 진행 중입니다.", 409)
+        try:
+            if time.monotonic() < self._next_model_probe:
+                raise AppError("연결 테스트는 10초 뒤 다시 실행할 수 있습니다.", 429)
+            self._next_model_probe = time.monotonic() + 10
+            self._last_model_success = None
+            result = self.model.probe()
+            self._last_model_success = timestamp()
+            self.audit(user, "bedrock_probe_success", "runtime")
+            return result
+        finally:
+            self._model_probe_lock.release()
 
     def knowledge(self, project):
         sources = {r["id"]: r for r in self.store.list(project, "source")}
@@ -167,6 +192,11 @@ class Service(Research, Voc, Planning, Chat):
         parsed = urlparse(route)
         path, query = parsed.path, {k: v[-1] for k, v in parse_qs(parsed.query).items()}
         p = user["project_id"]
+        if path == "/api/model/status":
+            owner(user)
+            if getattr(self.model, "provider", None) != "bedrock":
+                raise AppError("Bedrock 서버 설정이 필요합니다.", 503)
+            return self.model.status()
         if path == "/api/bootstrap":
             return {"user": user, "features": self.features(p), "model_configured": self.model.configured,
                 "model_name": self.model.model if self.model.configured else None, "model_provider": getattr(self.model, "provider", "test"),
@@ -201,6 +231,7 @@ class Service(Research, Voc, Planning, Chat):
     def post(self, user, route, body):
         p = user["project_id"]
         routes = {"/api/research/upload": self.research_upload, "/api/research/extract": self.research_extract,
+            "/api/model/test": self.test_model,
             "/api/insights": self.insight_save, "/api/insights/update": self.insight_save, "/api/insights/release": self.insight_release,
             "/api/jobs/retry": self.retry_job, "/api/features/import": self.import_features,
             "/api/voc/upload": self.voc_upload, "/api/voc/reviews": self.collect_reviews, "/api/voc/feature": self.voc_edit,

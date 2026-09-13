@@ -107,6 +107,17 @@ class Store:
             db.execute("INSERT INTO sessions(token_hash,user_id,csrf,expires,project_id) VALUES(?,?,?,?,?)", (hashlib.sha256(token.encode()).hexdigest(), row["id"], csrf, time.time() + 8 * 3600, row["project_id"]))
         return token, csrf
 
+    def has_public_demo_passwords(self):
+        """Startup check against documented sample passwords, independent of email."""
+        with self.db() as db:
+            rows = db.execute("SELECT salt,password_hash FROM users").fetchall()
+        for row in rows:
+            for password in ("Owner-demo-2026!", "Planner-demo-2026!"):
+                digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(row["salt"]), 260000).hex()
+                if hmac.compare_digest(digest, row["password_hash"]):
+                    return True
+        return False
+
     def authenticate(self, token):
         with self.db() as db:
             row = db.execute("SELECT u.id,u.email,m.role,s.project_id,s.csrf FROM sessions s JOIN users u ON u.id=s.user_id JOIN memberships m ON m.user_id=u.id AND m.project_id=s.project_id WHERE token_hash=? AND expires>?", (hashlib.sha256(token.encode()).hexdigest(), time.time())).fetchone()

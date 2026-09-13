@@ -13,13 +13,15 @@ from app.store import Store
 ROOT = Path(__file__).resolve().parent
 
 
-def seed(store):
+def seed(store, credentials=None, public_demo=True):
     with store.db() as db:
         if db.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
             raise SystemExit("이미 초기화된 환경입니다. 기존 데이터를 유지합니다.")
     project = "synthetic-advertiser-project"
-    owner_id = store.create_user("owner@example.test", "Owner-demo-2026!", "owner", project)
-    store.create_user("po@example.test", "Planner-demo-2026!", "po", project)
+    credentials = credentials or {"owner": ("owner@example.test", "Owner-demo-2026!"),
+                                  "po": ("po@example.test", "Planner-demo-2026!")}
+    owner_id = store.create_user(*credentials["owner"], "owner", project)
+    store.create_user(*credentials["po"], "po", project)
     user = {"id": owner_id, "role": "owner", "project_id": project}
     service = Service(store, create_model())
     service.import_features(user, json.loads((ROOT / "samples/features.json").read_text()))
@@ -50,10 +52,11 @@ def seed(store):
         service.post(user, "/api/personas", {"name": name, "segment": segment, "goals": goals, "constraints": constraints, "assumptions": "공개 가상 데이터로 직접 설정한 테스트 페르소나. 실제 인터뷰 대상 아님.", "evidence_ids": [eid, linked["id"]], "observations": [{"evidence_id": eid, "quote": insight["text"]}, {"evidence_id": linked["id"], "quote": linked["text"]}]})
     prd = service.import_prd(user, {"title": "소재 분석 리포트 개선 · 기준 PRD", "filename": "existing_service_prd.md", "content_base64": base64.b64encode((ROOT / "samples/existing_service_prd.md").read_bytes()).decode()})
     service.post(user, "/api/conversations", {"title": "소재 분석 서비스 기획", "mode": "research", "prd_id": prd["id"]})
-    (store.directory / "demo-mode").write_text("local synthetic demo only")
-    print("가상 샘플 초기화 완료. 로컬 데모 전용 계정:")
-    print("owner@example.test / Owner-demo-2026!")
-    print("po@example.test / Planner-demo-2026!")
+    if public_demo:
+        (store.directory / "demo-mode").write_text("local synthetic demo only")
+        print("가상 샘플 초기화 완료. 로컬 데모 전용 계정:")
+        print("owner@example.test / Owner-demo-2026!")
+        print("po@example.test / Planner-demo-2026!")
 
 
 def main():
@@ -63,6 +66,8 @@ def main():
     parser.add_argument("--origin", help="Browser-visible origin; required behind a reverse proxy")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--data-dir", default=os.environ.get("NPD_DATA_DIR", str(ROOT / "runtime")))
+    parser.add_argument("--require-model", action="store_true", default=os.getenv("NPD_REQUIRE_MODEL") == "1",
+                        help="Refuse serving unless a real Bedrock probe succeeds")
     args = parser.parse_args()
     store = Store(args.data_dir)
     if args.command == "demo":
@@ -81,6 +86,17 @@ def main():
         if not db.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
             raise SystemExit("먼저 python manage.py demo 또는 python manage.py init을 실행하세요.")
     service = Service(store, create_model())
+    if args.require_model:
+        if store.has_public_demo_passwords():
+            raise SystemExit("고객 테스트 환경에는 공개 샘플 비밀번호를 사용하지 마세요. bootstrap_pilot.py로 초기화하세요.")
+        if getattr(service.model, "provider", None) != "bedrock":
+            raise SystemExit("이 실행 모드에는 Bedrock이 필요합니다.")
+        from app.store import AppError, timestamp
+        try:
+            service.model.probe()
+            service._last_model_success = timestamp()
+        except AppError as exc:
+            raise SystemExit(str(exc)) from None
     store.recover_jobs()
     server = Server((args.host, args.port), service, origin=args.origin)
     print(f"NPD Assistant: {server.origin} | AI 모델: {'연결 설정됨' if service.model.configured else '미설정'}", flush=True)

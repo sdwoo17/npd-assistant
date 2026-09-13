@@ -63,6 +63,19 @@ async function nav(page, name) {
   await page.locator("#page-" + name).waitFor({ state: "visible" });
 }
 
+test("browser: only owner can request a model probe and failures never look connected", async () => {
+  const po = await login("po");
+  assert.equal(await po.page.locator("#model-owner-tools").isVisible(), false);
+  await po.ctx.close();
+  const owner = await login("owner");
+  assert.equal(await owner.page.locator("#model-owner-tools").isVisible(), true);
+  await owner.page.click("#test-bedrock");
+  await owner.page.waitForFunction(() => document.querySelector("#notice").textContent.includes("Bedrock 제공자"));
+  assert.equal(await owner.page.locator("#test-bedrock").isEnabled(), true);
+  assert.deepEqual(owner.errors, []);
+  await owner.ctx.close();
+});
+
 test("browser: eight stored personas keep the desktop composer within reach", async () => {
   const { ctx, page, errors } = await login("po");
   try {

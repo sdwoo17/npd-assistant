@@ -7,6 +7,7 @@ COPY app ./app
 COPY static ./static
 COPY samples ./samples
 COPY manage.py ./
+COPY scripts ./scripts
 USER npd
 EXPOSE 8765
 ENTRYPOINT ["python", "manage.py"]

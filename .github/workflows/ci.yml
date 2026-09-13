@@ -17,6 +17,8 @@ jobs:
         with:
           node-version: '22'
       - run: python -m pip install -r requirements.txt
+      - run: python -m pip install 'cfn-lint>=1.30,<2'
+      - run: cfn-lint infra/pilot.json
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: python -m compileall -q app manage.py scripts
@@ -25,6 +27,7 @@ jobs:
       - name: Build container and verify local HTTP startup
         run: |
           docker build -t npd-assistant:ci .
+          docker run --rm --entrypoint python npd-assistant:ci -c "from scripts.live_validation import run_workflow; from scripts.bootstrap_pilot import initialize; from scripts.bedrock_check import check; from app.model import BedrockModel; result, code = check(BedrockModel(model=''), live=False); assert code == 2 and not result['live_call']"
           docker volume create npd-ci-data
           docker run --rm -v npd-ci-data:/data npd-assistant:ci demo
           docker run -d --name npd-ci -p 127.0.0.1:8765:8765 -v npd-ci-data:/data npd-assistant:ci

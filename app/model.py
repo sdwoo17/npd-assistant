@@ -1,6 +1,7 @@
 """Provider adapters. No generated-answer fallback; all responses are schema checked."""
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from jsonschema import Draft202012Validator, ValidationError
@@ -17,6 +18,7 @@ OBSERVATIONS = {"type": "array", "items": obj({"evidence_id": STRING, "quote": S
 ANSWER = {"text": STRING, "evidence_ids": STRINGS, "assumptions": STRINGS, "observations": OBSERVATIONS}
 SUMMARY = obj({"text": STRING, "evidence_ids": STRINGS, "message_ids": STRINGS})
 SCHEMAS = {
+    "probe": obj({"status": {"type": "string", "enum": ["ok"]}}),
     "insights": obj({"insights": {"type": "array", "items": obj({
         "title": STRING, "text": STRING, "feature": STRING, "applicability": STRING,
         "limitations": STRING, "competitor": STRING, "observed_at": STRING, "public_url": STRING})}}),
@@ -45,6 +47,7 @@ come from supplied evidence or server statistics; their filters and denominators
 No Markdown links or citation IDs need be invented; the server renders validated inline citations.
 Respond in Korean while preserving exact evidence excerpts in their original language."""
 TASKS = {
+    "probe": "This is a connectivity check with no customer data. Return status ok in the required structure.",
     "insights": "Extract at most 8 shareable paraphrased insights from this chunk for OWNER REVIEW. Never publish. Include applicability, limitations, competitor; blank dates/URLs if not present. feature must be from supplied taxonomy.",
     "persona": "Create a SYNTHETIC advertiser persona for target_segment. Distinguish observed excerpts from assumed goals/preferences. Prefer both research and advertiser VoC; disclose missing evidence. Use requested_name if provided.",
     "chat": "Answer the question using relevant evidence and server statistics. Explain conflicting evidence, planning hypotheses and uncertainty. Preserve moderator messages and decisions.",
@@ -118,6 +121,19 @@ class BedrockModel:
         self.region = region or os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION", "ap-northeast-2")
         self.output_mode = output_mode or os.getenv("BEDROCK_OUTPUT_MODE", "json_schema")
         self.client = client
+        self.last_call = None
+        self.last_error = None
+
+    def status(self):
+        return {"provider": self.provider, "model": self.model, "region": self.region,
+                "output_mode": self.output_mode, "configured": self.configured,
+                "authentication": "bedrock_api_key" if os.getenv("AWS_BEARER_TOKEN_BEDROCK") else "aws_sdk_credential_chain",
+                "connection_verified": self.last_call is not None and self.last_error is None,
+                "last_call": self.last_call, "last_error": self.last_error}
+
+    def probe(self):
+        self.generate("probe", {"purpose": "NPD connection check; no project data"})
+        return self.status()
 
     @property
     def configured(self):
@@ -126,18 +142,21 @@ class BedrockModel:
 
     def generate(self, task, payload):
         if not self.configured:
-            raise AppError("Bedrock 모델이 설정되지 않았습니다. BEDROCK_MODEL_ID와 AWS 권한을 확인하세요.", 503)
-        if self.output_mode not in ("json_schema", "tool"):
-            raise AppError("BEDROCK_OUTPUT_MODE는 json_schema 또는 tool이어야 합니다.", 503)
+            self.last_error = "bedrock_not_configured"
+            raise BedrockError(self.last_error, "BEDROCK_MODEL_ID와 AWS_REGION을 설정하세요.", 503)
+        if self.output_mode not in ("json_schema", "tool", "strict_tool"):
+            self.last_error = "bedrock_output_mode"
+            raise BedrockError(self.last_error, "BEDROCK_OUTPUT_MODE는 json_schema, tool, strict_tool 중 하나여야 합니다.", 503)
+        started = time.perf_counter()
         try:
             if self.client is None:
                 import boto3
                 from botocore.config import Config
                 self.client = boto3.client("bedrock-runtime", region_name=self.region,
-                    config=Config(connect_timeout=5, read_timeout=180, retries={"total_max_attempts": 2, "mode": "standard"}))
+                    config=Config(connect_timeout=5, read_timeout=300, retries={"total_max_attempts": 2, "mode": "standard"}))
             req = {"modelId": self.model, "system": [{"text": RULES + "\n" + TASKS[task]}],
                    "messages": [{"role": "user", "content": [{"text": json.dumps(payload, ensure_ascii=False)}]}],
-                   "inferenceConfig": {"maxTokens": 8000}}
+                   "inferenceConfig": {"maxTokens": 256 if task == "probe" else 8000}}
             name = "npd_" + task
             if self.output_mode == "json_schema":
                 req["outputConfig"] = {"textFormat": {"type": "json_schema", "structure": {
@@ -146,9 +165,11 @@ class BedrockModel:
                 # This is a structured response envelope, never an executable application tool.
                 req["toolConfig"] = {"tools": [{"toolSpec": {"name": name, "description": "Return the NPD response object.",
                     "inputSchema": {"json": SCHEMAS[task]}}}], "toolChoice": {"tool": {"name": name}}}
+                if self.output_mode == "strict_tool":
+                    req["toolConfig"]["tools"][0]["toolSpec"]["strict"] = True
             result = self.client.converse(**req)
             content = result.get("output", {}).get("message", {}).get("content", [])
-            if self.output_mode == "tool":
+            if self.output_mode in ("tool", "strict_tool"):
                 blocks = [x["toolUse"] for x in content if "toolUse" in x]
                 if result.get("stopReason") != "tool_use" or len(blocks) != 1 or blocks[0].get("name") != name:
                     raise AppError("Bedrock 도구 응답을 확인하지 못했습니다.", 502)
@@ -157,12 +178,53 @@ class BedrockModel:
                 if result.get("stopReason") != "end_turn":
                     raise AppError("Bedrock 응답이 완료되지 않았습니다.", 502)
                 data = json.loads("".join(x.get("text", "") for x in content))
-            return validate(task, data)
-        except AppError:
+            checked = validate(task, data)
+            from .store import timestamp
+            self.last_call = {"at": timestamp(), "task": task,
+                "seconds": round(time.perf_counter() - started, 3),
+                "request_id": result.get("ResponseMetadata", {}).get("RequestId"),
+                "input_tokens": result.get("usage", {}).get("inputTokens"),
+                "output_tokens": result.get("usage", {}).get("outputTokens")}
+            self.last_error = None
+            return checked
+        except AppError as exc:
+            self.last_error = "bedrock_response_invalid"
             raise
-        except Exception:
-            # Provider exception strings can contain request data. Do not return them.
-            raise AppError("Bedrock 호출 실패. 리전·모델·IAM 권한·출력 형식 지원을 확인하고 다시 시도하세요.", 502)
+        except Exception as exc:
+            error = bedrock_error(exc)
+            self.last_error = error.code
+            raise error from None
+
+
+class BedrockError(AppError):
+    def __init__(self, code, message, status=502):
+        super().__init__(message, status)
+        self.code = code
+
+
+def bedrock_error(exc):
+    """Classify safe provider codes; never return exception messages or inputs."""
+    response = getattr(exc, "response", None)
+    error = response.get("Error", {}) if isinstance(response, dict) else {}
+    code = error.get("Code") if isinstance(error, dict) else None
+    if not isinstance(code, str):
+        code = type(exc).__name__
+    errors = {
+        "NoCredentialsError": ("bedrock_credentials_missing", "AWS 인증을 찾지 못했습니다. IAM 역할, AWS 프로필 또는 Bedrock API 키를 서버에 연결하세요.", 503),
+        "PartialCredentialsError": ("bedrock_credentials_incomplete", "AWS 인증 설정이 불완전합니다. 서버 인증 설정을 확인하세요.", 503),
+        "ExpiredTokenException": ("bedrock_credentials_expired", "AWS 인증이 만료됐습니다. 서버의 세션 또는 API 키를 갱신하세요.", 503),
+        "UnrecognizedClientException": ("bedrock_credentials_invalid", "AWS 인증이 유효하지 않습니다. 서버의 프로필·세션·API 키를 확인하세요.", 503),
+        "AccessDeniedException": ("bedrock_access_denied", "Bedrock 호출 권한이 없습니다. 모델 이용 조건, InvokeModel 권한 및 추론 프로필의 대상 리전 권한을 확인하세요.", 503),
+        "ValidationException": ("bedrock_request_invalid", "Bedrock 요청 설정을 확인하세요. 모델 ID·추론 프로필·리전·구조화 출력 방식의 지원 여부를 확인하세요.", 503),
+        "ResourceNotFoundException": ("bedrock_model_not_found", "해당 리전에서 모델 또는 추론 프로필을 찾지 못했습니다.", 503),
+        "ThrottlingException": ("bedrock_throttled", "Bedrock 요청 한도에 도달했습니다. 잠시 후 다시 시도하세요.", 429),
+        "ServiceQuotaExceededException": ("bedrock_quota", "Bedrock 이용 한도를 확인하세요.", 429),
+        "ModelTimeoutException": ("bedrock_timeout", "Bedrock 응답 시간이 초과됐습니다. 입력량을 줄이거나 다시 시도하세요.", 504),
+        "ReadTimeoutError": ("bedrock_timeout", "Bedrock 응답을 기다리다 연결 시간이 초과됐습니다. 첫 구조화 출력 처리에는 시간이 더 걸릴 수 있습니다.", 504),
+        "EndpointConnectionError": ("bedrock_network", "Bedrock 엔드포인트에 연결하지 못했습니다. 리전·네트워크 경로를 확인하세요.", 503),
+        "ParamValidationError": ("bedrock_sdk_contract", "AWS SDK와 요청 형식이 맞지 않습니다. requirements.txt의 의존성과 출력 방식을 확인하세요.", 503),
+    }
+    return BedrockError(*errors.get(code, ("bedrock_call_failed", "Bedrock 호출에 실패했습니다. 서버 연결과 모델 상태를 확인하세요.", 502)))
 
 
 def create_model():

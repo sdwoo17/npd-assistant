@@ -88,6 +88,26 @@ class HTTPTests(unittest.TestCase):
         self.login()
         self.assertEqual(self.request("GET", "/../app/store.py")[0], 404)
 
+    def test_load_balancer_health_exception_does_not_relax_application_hosts(self):
+        status, data, _ = self.request("GET", "/healthz", headers={"Host": "10.0.1.20:8765"})
+        self.assertEqual(status, 200)
+        self.assertEqual(data, {"status": "ok"})
+        for route in ("/api/bootstrap", "/api/model/status", "/"):
+            self.assertEqual(self.request("GET", route, headers={"Host": "10.0.1.20:8765"})[0], 403)
+
+    def test_bedrock_probe_http_authentication_and_safe_diagnostic_code(self):
+        from app.model import BedrockModel
+        self.f.service.model = BedrockModel(model="")
+        self.assertEqual(self.request("POST", "/api/model/test", {})[0], 401)
+        self.login()
+        self.assertEqual(self.request("POST", "/api/model/test", {"role": "owner"})[0], 403)
+        self.login("owner")
+        self.assertEqual(self.request("POST", "/api/model/test", {}, {"X-CSRF-Token": "bad"})[0], 403)
+        status, result, _ = self.request("POST", "/api/model/test", {})
+        self.assertEqual(status, 503)
+        self.assertEqual(result["code"], "bedrock_not_configured")
+        self.assertNotIn(CANARY, json.dumps(result))
+
     def test_login_rate_limit(self):
         for _ in range(10):
             self.assertEqual(self.request("POST", "/api/login", {"email": "po@example.test", "password": "wrong"})[0], 401)

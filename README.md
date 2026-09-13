@@ -4,7 +4,19 @@
 
 이 저장소는 기존 CloudFront NPD-assistant와 분리된 프로젝트입니다. **현재 완료 범위는 단일 서버에서 실행되는 세 기능과 회귀 검증**입니다. AXIOM 실연동, 기존 AWS 앱 이식, 실제 광고주 UAT, 모델 답변 품질 검증까지 완료했다는 의미는 아닙니다. [수용 기준과 남은 검증](docs/VERIFICATION.md)을 확인하세요.
 
-## 실행
+## Bedrock으로 바로 실행
+
+Python 3.11 이상 환경에서 아래 설치를 마친 후 다음 명령을 실행하세요. `MODEL_OR_PROFILE_ID`는 실제 계정·리전에서 접근 가능한 모델 또는 추론 프로필 ID로 바꿉니다.
+
+```bash
+python scripts/start_bedrock.py --region ap-northeast-2 --model-id MODEL_OR_PROFILE_ID --profile YOUR_AWS_PROFILE --data-dir /path/to/new-private-data
+```
+
+기존 AWS 역할·환경 인증을 사용하면 `--profile`을 생략합니다. Bedrock API 키로 실행할 때는 `--profile` 대신 `--prompt-api-key`를 사용합니다. 키와 초기 계정 비밀번호는 숨김 입력하며 파일이나 GitHub에 저장하지 않습니다. 실제 Bedrock 응답이 없으면 서버가 시작되지 않습니다. 새 폴더에는 비공개 계정과 합성 기본 자산을 만들며, `--assets /path/to/private-pack`으로 별도 도메인 팩을 적재할 수 있습니다. 독점 인사이트는 기본 비공개이며 소유자의 공유 승인이 필요합니다.
+
+이 런처의 원자적 디렉터리 초기화와 AWS 배포는 Linux 환경에서 검증합니다. Windows에서는 WSL을 사용하세요. AWS 인증·모델이 없는 환경의 실패를 연결 성공으로 표시하지 않습니다. **HTTPS 고객 파일럿 배포와 실제 Bedrock 전체 흐름 검사는 [Bedrock 실행·배포 안내](docs/BEDROCK_PILOT.md)를 따르세요.**
+
+## 설치 및 로컬 화면 확인
 
 Python 3.11 이상, 검증 환경은 Python 3.12 / Node 22 이상입니다. 화면은 별도 번들 빌드 없이 서버가 제공합니다.
 
@@ -44,19 +56,20 @@ python manage.py serve --data-dir /path/to/private-data
 
 | 제공자 | 필수 설정 | 출력 계약 |
 | --- | --- | --- |
-| Bedrock (기본) | `BEDROCK_MODEL_ID`, `AWS_REGION`, 사용 가능한 AWS 자격 증명/실행 역할 | `BEDROCK_OUTPUT_MODE=json_schema` 또는 `tool` |
+| Bedrock (기본) | `BEDROCK_MODEL_ID`, `AWS_REGION`, 사용 가능한 AWS 인증/실행 역할 또는 `AWS_BEARER_TOKEN_BEDROCK` | `BEDROCK_OUTPUT_MODE=json_schema`, `tool`, `strict_tool` |
 | OpenAI (선택) | `NPD_MODEL_PROVIDER=openai`, `OPENAI_MODEL`, `OPENAI_API_KEY` | Responses API strict JSON Schema |
 
-Bedrock `json_schema`는 해당 모델의 structured output 지원이 필요합니다. `tool`은 강제 도구 선택을 지원하는 모델용 응답 형식이며 실제 외부 도구를 실행하지 않습니다. 계정·리전에서 접근 가능한 모델 또는 inference profile ID를 지정하세요. 자동 제공자 전환이나 샘플 응답 폴백은 없습니다. 배지는 설정 유무와 이 서버 프로세스의 마지막 유효 응답 수신을 구분하며 답변 품질을 보증하지 않습니다.
+Bedrock `json_schema`와 `strict_tool`은 해당 모델의 structured output 지원이 필요합니다. `tool`은 강제 도구 선택을 지원하는 모델용 응답 형식이며 실제 외부 도구를 실행하지 않습니다. 계정·리전에서 접근 가능한 모델 또는 inference profile ID를 지정하세요. 자동 제공자 전환이나 샘플 응답 폴백은 없습니다. 배지는 설정 유무와 이 서버 프로세스의 마지막 유효 응답 수신을 구분하며 답변 품질을 보증하지 않습니다. 소유자 화면의 **Bedrock 연결 테스트**는 고객 자료 없는 소량의 실제 호출을 보내며, PO는 이 진단 API를 실행할 수 없습니다.
 
 소유자의 인사이트 추출은 **원문을 설정된 제공자로 전달**합니다. PO 채팅은 승인된 인사이트와 가명화된 VoC만 전달합니다. AWS IAM 권한·제공자 데이터 처리 설정은 실제 실행 환경에서 별도 확인합니다. OpenAI에는 `store: false`를 사용하지만 이것이 제공자의 모든 로그 보존을 해제한다는 의미는 아닙니다.
 
 ```bash
 # 실제 제공자 호출: 합성 입력을 사용하며 API 비용이 발생할 수 있습니다.
+python scripts/bedrock_check.py --live
 python scripts/live_validation.py --run
 ```
 
-모델 미설정 또는 `--run` 미지정이면 `SKIPPED`와 종료 코드 2를 반환합니다. 자동 회귀 테스트는 이를 실제 연결 성공으로 계산하지 않습니다.
+전체 흐름 검증은 모델 미설정 또는 `--run` 미지정이면 `NOT_RUN`과 종료 코드 2를 반환합니다. 연결 검사에서 `--live`를 지정해도 모델이 없으면 `FAIL`과 종료 코드 1을 반환합니다. 자동 회귀 테스트는 이를 실제 연결 성공으로 계산하지 않습니다.
 
 ## 세 기능의 동작
 
@@ -107,3 +120,5 @@ docker compose up -d
 Compose는 로컬 `127.0.0.1`에만 포트를 공개하고 데이터는 별도 볼륨에 저장합니다. 실제 자료는 `demo` 대신 `init`을 사용합니다. 초기화가 끝난 볼륨에 `demo`를 반복하면 기존 데이터를 유지하고 중단합니다.
 
 이 버전은 단일 프로세스 HTTP 서버+SQLite+로컬 암호화 키입니다. 프로세스 재시작 때 중단된 작업을 실패 상태로 복구합니다. 다중 복제본, 관리형 DB/KMS, Cognito, 비동기 작업 큐, 대규모 벡터 검색, OCR, 클라우드 공개 운영 인증은 포함되지 않습니다. **기존 CloudFront 사이트가 이 코드로 자동 갱신되지 않습니다.** 기존 AWS 앱으로의 이식 경계는 [통합 지침](docs/INTEGRATION.md)에 정리했습니다.
+
+`infra/pilot.json`은 지정 사무실/VPN IP에서만 접근하는 HTTPS 단일 EC2 파일럿 구성입니다. IAM 실행 역할, 암호화 EBS, 비공개 초기 계정과 실제 Bedrock 시작 검사를 포함합니다. 이 템플릿을 추가한 것과 AWS 리소스 생성·고객 UAT 완료는 다릅니다. 최초 생성 전용이며 기존 스택의 자동 업데이트를 거절합니다.

@@ -1,5 +1,28 @@
 # 0.2 구현·회귀 검증 기록
 
+## 2026-09-13 Bedrock 실행 경로 추가 검증
+
+현재 변경에서 소유자 전용 연결 테스트, 실제 Bedrock 응답을 요구하는 서버 시작, 비공개 계정 초기화, HTTP 전체 흐름 live gate와 AWS 최초 파일럿 배포 구성을 추가했다. 동일한 도메인 아카이브는 기존 비공개 확보본을 사용하며 공개 저장소에는 넣지 않았다.
+
+| 확인 항목 | 이번 실제 결과 |
+| --- | --- |
+| 전체 Python | **110개 × 3회**, 전부 통과 |
+| jsdom + HTTP/SQLite | **2개 × 3회**, 전부 통과 |
+| Chromium + HTTP/SQLite | **6개 × 3회**, 전부 통과 |
+| 추가 경계 | 3가지 출력 계약의 실제 botocore 직렬화, 8개 AWS 오류 코드, 토큰 미노출, owner/PO·CSRF·Host, 실패 배지 갱신, 기본 비밀번호·실패한 Bedrock의 서버 기동 차단, 신규 스택 제한, 입력 변조 |
+| 구조·구문 | compileall, node --check, git diff --check, cfn-lint와 EC2 bootstrap bash -n 통과 |
+| 실제 연결 검사 | `bedrock_check.py --live`는 **FAIL / bedrock_not_configured / 종료 코드 1** |
+| 실제 전체 흐름 | `live_validation.py --run`은 **NOT_RUN / 종료 코드 2** |
+| 실제 AWS 상태 | 현재 작업 환경에 AWS 인증/프로필/실행 역할/Bedrock API 키와 모델 ID가 없다. 리소스 생성·배포 주소·실제 모델 품질 검증은 수행하지 못했다. |
+
+[이번 반복 실행 기록](bedrock-regression-summary.json)은 9번의 테스트 묶음 실행 결과다. 110/2/6은 서로 다른 테스트 수이고 반복을 새 시나리오 수로 계산하지 않는다. 기존 20개 시드의 CSV 1,000행/상태 전환 300단계도 매 Python 실행에 포함된다. 회귀 테스트 안의 모델과 실제 HTTP live gate의 자체 테스트는 명시적인 test double이다. SDK Stubber도 네트워크 호출은 하지 않는다.
+
+GitHub CI에는 동일 회귀 루프·CloudFormation lint·Docker 빌드 및 HTTP 시작·컨테이너 내 live gate import 검사를 포함했다. 최종 CI 결과는 해당 변경 커밋의 Actions 실행에서 확인한다. 템플릿은 정적 검증을 통과했지만 실제 AWS에서 설치·IAM·네트워크를 검증한 것은 아니다.
+
+이번 수정 중 SDK 시간 초과 예외의 `response=None` 처리, 컨테이너에서 scripts가 제외되던 구성, Amazon Linux 기본 Python 버전, 비관리자 계정의 설치 코드 읽기 권한을 바로잡았다. 기존 EC2 user-data 변경을 앱 업데이트로 간주하지 않도록 배포 도구는 신규 스택만 허용한다. [실행과 고객 테스트 순서](BEDROCK_PILOT.md)를 따른다.
+
+## 이전 버전 검증 기록
+
 검토 기준: `main`의 `946a2a105a2917641492468053974e78b133ef54`와 사용자의 세 기능 요구사항 및 16개 수용 기준. 수정 브랜치: `feature/research-workflow-v2`. 검증일: 2026-09-12.
 
 **정의한 자동 검증은 통과했지만 “100% 완벽한 제품”으로 판정하지 않는다.** 실제 AI 응답 품질, 광고주 표본의 대표성, AXIOM 수신 후 인용 보존, 기존 AWS 앱 통합과 공개 운영은 별도 검증이 남아 있다.

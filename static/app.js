@@ -170,6 +170,7 @@ async function refresh() {
     projects.find((p) => p.id === state.user.project_id)?.title ||
     state.user.project_id;
   $("model-warning").hidden = boot.model_configured;
+  $("model-owner-tools").hidden = state.user.role !== "owner";
   $("model-state").textContent = boot.model_configured
     ? boot.model_provider +
       " · " +
@@ -1032,6 +1033,17 @@ $("logout").onclick = guard(async () => {
   await api("/api/logout", {});
   resetWorkspace();
   window.location.reload();
+});
+$("test-bedrock").onclick = guard(async () => {
+  notice("Bedrock에 연결 중입니다. 첫 구조화 출력 처리에는 수 분이 걸릴 수 있습니다.");
+  try {
+    const result = await api("/api/model/test", {});
+    await refresh();
+    notice("Bedrock 실제 응답 확인 · " + result.region + " · " + result.last_call.seconds + "초. 업무별 답변 품질 검증은 별도입니다.");
+  } catch (error) {
+    await refresh();
+    throw error;
+  }
 });
 $("project-switch").onchange = guard(async () => {
   const result = await api("/api/projects/switch", {

@@ -49,8 +49,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
-            self.check_host()
             route = urlparse(self.path).path
+            if route == "/healthz":
+                # ALB probes use the target IP as Host. This route contains no
+                # project/model information and never authenticates or writes.
+                return self.send(200, {"status": "ok"})
+            self.check_host()
             static = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"), "/styles.css": ("styles.css", "text/css")}
             if route in static:
                 path, mime = static[route]
@@ -60,7 +64,7 @@ class Handler(BaseHTTPRequestHandler):
             _, user = self.context()
             return self.send(200, self.server.service.get(user, self.path))
         except AppError as e:
-            self.send(e.status, {"error": str(e)})
+            self.send(e.status, {"error": str(e), **({"code": e.code} if hasattr(e, "code") else {})})
         except Exception:
             self.send(500, {"error": "요청 처리 중 오류가 발생했습니다."})
 
@@ -93,7 +97,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {"ok": True}, cookie="npd_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
             return self.send(201, self.server.service.post(user, route, body))
         except AppError as e:
-            self.send(e.status, {"error": str(e)})
+            self.send(e.status, {"error": str(e), **({"code": e.code} if hasattr(e, "code") else {})})
         except (ValueError, TypeError, KeyError):
             self.send(400, {"error": "입력 형식을 확인하세요."})
         except Exception:
