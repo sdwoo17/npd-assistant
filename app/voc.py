@@ -68,8 +68,9 @@ class Voc:
                     "parent_feature_id": optional(row, "parent_feature_id", 80), "terms": strings(row.get("terms", []), 50, 100)}
             prepared.append(item)
             tree[key] = item
-        for item in prepared:
-            path, cursor = set(), item["key"]
+        # A parent edit can invalidate children omitted from this import.
+        for key in tree:
+            path, cursor = set(), key
             while cursor:
                 if cursor not in tree or cursor in path:
                     raise AppError("기능 트리의 부모 ID 또는 순환 관계를 확인하세요.")
@@ -154,8 +155,8 @@ class Voc:
             raise AppError("한 VoC의 연결 기능은 같은 서비스에 속해야 합니다.")
         return self.store.update(p, "voc", r["id"], {"feature": ids[0], "feature_ids": ids,
             "service_id": taxonomy[ids[0]]["service_id"], "classification_source": "po_reviewed",
-            "problem": optional(body, "problem", 1500) or r.get("problem", ""),
-            "need": optional(body, "need", 1500) or r.get("need", "")}, body.get("expected_version", r["version"]))
+            "problem": redact(optional(body, "problem", 1500)) if "problem" in body else redact(r.get("problem", "")),
+            "need": redact(optional(body, "need", 1500)) if "need" in body else redact(r.get("need", ""))}, body.get("expected_version", r["version"]))
 
     def classify_voc(self, user, body):
         p = user["project_id"]

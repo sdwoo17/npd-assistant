@@ -114,9 +114,11 @@ class Planning:
         answer = validate_answer(result, evidence, statistics)
         message_ids, evidence_ids = {m["id"] for m in messages}, {e["id"] for e in evidence}
         groups = self.debrief_groups(result, message_ids, evidence_ids)
+        answer["evidence_ids"] = sorted(set(answer["evidence_ids"]) | {eid for rows in groups.values() for row in rows for eid in row["evidence_ids"]})
         return self.store.write(p, inserts=[("debrief", {**answer, **groups, "text": inline_text(answer), "conversation_id": conv["id"],
             "source_message_ids": [m["id"] for m in messages], "dependencies": deps, "model": self.model.model,
-            "review_status": "needs_po_review", "is_synthetic": True}, None)], expected_epoch=epoch)[0]
+            "review_status": "needs_po_review", "is_synthetic": True}, None)], expected_epoch=epoch,
+            checks=[("conversation", conv["id"], conv["version"])])[0]
 
     def debrief_groups(self, body, message_ids, evidence_ids):
         groups = {}
@@ -134,11 +136,17 @@ class Planning:
 
     def review_debrief(self, user, body):
         p = user["project_id"]
+        epoch = self.store.epoch(p)
         old = self.store.get(p, "debrief", body.get("debrief_id"))
         if not self.accessible(p, old):
             raise AppError("디브리프의 근거가 변경됐습니다.", 409)
-        groups = self.debrief_groups(body, set(old["source_message_ids"]), {e["id"] for e in self.knowledge(p)})
-        return self.store.update(p, "debrief", old["id"], {**groups, "review_status": "po_reviewed", "reviewed_by": user["id"]}, revision(body))
+        evidence = self.knowledge(p)
+        groups = self.debrief_groups(body, set(old["source_message_ids"]), {e["id"] for e in evidence})
+        ids = set(old["evidence_ids"]) | {eid for rows in groups.values() for row in rows for eid in row["evidence_ids"]}
+        dependencies = dependency_map([old] + [e for e in evidence if e["id"] in ids])
+        return self.store.write(p, updates=[("debrief", old["id"], {**groups,
+            "evidence_ids": sorted(ids), "dependencies": dependencies,
+            "review_status": "po_reviewed", "reviewed_by": user["id"]}, revision(body))], expected_epoch=epoch)[0]
 
     def planning_context(self, user, body):
         p = user["project_id"]
@@ -163,8 +171,13 @@ class Planning:
         if not self.accessible(p, prd):
             raise AppError("기준 PRD의 근거가 변경됐습니다.", 409)
         decisions = [d for d in conv.get("decisions", []) if d.get("active", True)]
+        debriefs = [d for d in self.get(user, "/api/debriefs") if d["conversation_id"] == conv["id"]]
+        debrief_ids = {eid for d in debriefs for eid in d["evidence_ids"]}
+        evidence_ids = {e["id"] for e in evidence} | debrief_ids
+        evidence = [e for e in self.knowledge(p) if e["id"] in evidence_ids]
+        deps = dependency_map([{"dependencies": deps}] + debriefs + evidence)
         result = self.generate("proposal", {"conversation": messages, "evidence": evidence, "statistics": statistics,
-            "target_prd": prd, "decisions": decisions})
+            "target_prd": prd, "decisions": decisions, "debriefs": debriefs})
         answer = validate_answer(result, evidence, statistics)
         if set(result["decision_ids"]) != {d["id"] for d in decisions}:
             raise AppError("PRD 제안에 모든 PO 결정이 연결되지 않았습니다.", 502)
@@ -188,9 +201,12 @@ class Planning:
         fields = {**answer, "text": inline_text(answer), "conversation_id": conv["id"], "state": "draft", "changes": cleaned,
             "target_prd_id": prd["id"], "target_prd_version": prd["version"], "decision_ids": result["decision_ids"],
             "decisions": decisions, "source_message_ids": [m["id"] for m in messages],
+            "source_debrief_versions": [{"id": d["id"], "version": d["version"]} for d in debriefs],
             "persona_versions": conv.get("participant_persona_versions", []), "dependencies": dependency_map([{"dependencies": deps}, prd]),
             "evidence_snapshots": evidence, "model": self.model.model}
-        return self.store.write(p, inserts=[("proposal", fields, None)], expected_epoch=epoch)[0]
+        return self.store.write(p, inserts=[("proposal", fields, None)], expected_epoch=epoch,
+            checks=[("conversation", conv["id"], conv["version"]), ("prd", prd["id"], prd["version"])]
+                + [("debrief", d["id"], d["version"]) for d in debriefs])[0]
 
     def decide_proposal(self, user, body):
         p = user["project_id"]
@@ -210,6 +226,12 @@ class Planning:
         prd = self.store.get(p, "prd", old["target_prd_id"])
         if prd["version"] != old["target_prd_version"]:
             raise AppError("기준 PRD가 변경됐습니다. 최신 버전에서 제안을 다시 생성하세요.", 409)
+        conv = self.conversation(user, old["conversation_id"])
+        decisions = [d for d in conv.get("decisions", []) if d.get("active", True)]
+        if conv["prd_id"] != old["target_prd_id"] or decisions != old.get("decisions", []):
+            raise AppError("대상 PRD 또는 PO 결정이 변경됐습니다. 제안을 다시 생성하세요.", 409)
+        checks = [("conversation", conv["id"], conv["version"])]
+        checks += [("debrief", d["id"], d["version"]) for d in old.get("source_debrief_versions", [])]
         edits = {c["section_id"]: c for c in old["changes"]}
         sections = [{**s, "text": edits[s["id"]]["after"] + "\n\n" + " ".join("["+i+"]" for i in edits[s["id"]]["evidence_ids"])}
                     if s["id"] in edits else s for s in prd["sections"]]
@@ -217,7 +239,7 @@ class Planning:
         result = self.store.write(p, updates=[
             ("prd", prd["id"], {"sections": sections, "dependencies": deps, "last_proposal_id": old["id"], "decisions": old.get("decisions", [])}, prd["version"]),
             ("proposal", old["id"], {"state": "accepted", "decided_by": user["id"], "applied_prd_version": prd["version"] + 1}, old["version"])
-        ], expected_epoch=epoch)
+        ], expected_epoch=epoch, checks=checks)
         return result[-1]
 
     def edit_proposal(self, user, body):
