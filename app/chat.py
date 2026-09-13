@@ -156,7 +156,7 @@ class Chat:
             # Persona evidence is explicit, not silently counted in filtered VoC statistics.
             ids = {i for r in targets for i in r["evidence_ids"]} | {e["id"] for e in evidence}
             evidence = [e for e in knowledge if e["id"] in ids]
-        if not evidence and self.model.configured and len(question.split()) > 2:
+        if not evidence and search_info["eligible"] and self.model.configured and len(question.split()) > 2:
             expansion = self.generate("search", {"question": question})
             keywords = strings(expansion["keywords"], 10, 200)
             evidence, search_info = self.search(p, question + " " + " ".join(keywords), scope)

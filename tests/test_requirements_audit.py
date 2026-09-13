@@ -44,6 +44,13 @@ class RequirementsAuditTests(unittest.TestCase):
     def accept(self, proposal):
         return self.s.post(self.po, '/api/proposals/decision', {'proposal_id': proposal['id'], 'state': 'accepted'})
 
+    def test_empty_project_returns_no_evidence_without_model_call(self):
+        user = self.f.other
+        conv = self.s.post(user, '/api/conversations', {'title': 'Empty project'})
+        result = self.s.post(user, '/api/chat', {'conversation_id': conv['id'], 'message': 'Please analyze advertiser needs'})
+        self.assertEqual(result['messages'][-1]['status'], 'no_evidence')
+        self.assertEqual(self.f.model.calls, [])
+
     def test_reviewed_evidence_is_exported_and_revocation_hides_debrief(self):
         conv = self.discussion()
         row = self.debrief(conv)

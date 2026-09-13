@@ -6,6 +6,7 @@ The repository does **not** implement 100% of the full requirements. Core resear
 
 | Requirements | Defect addressed | Result |
 | --- | --- | --- |
+| F1-08, AT-06 | Empty projects still attempted a model query expansion for multiword questions | If there are no eligible records, return no_evidence without a model call. Query expansion remains available when eligible records exist but lexical matching fails. |
 | F1-09, F3-09, AT-14 | Reviewed debrief groups could add evidence without updating version dependencies or exported evidence | Review stores the union of references and dependencies atomically; concurrent revocation is rejected. Legacy summaries with untracked group references are hidden pending regeneration. |
 | F3-09, PRD-02 | Proposal generation ignored saved and PO-edited debriefs | Valid debriefs and their evidence enter the proposal input; their versions and transitive dependencies are recorded. |
 | PRD-04, DATA-03 | New PO decisions could be ignored by accepting an older proposal; conversation/debrief changes during generation were not guarded | Changed decisions or target PRD reject adoption. Conversation, PRD and debrief version checks execute in the same SQLite write transaction. Changed referenced debriefs reject adoption without changing the PRD. |
@@ -16,7 +17,7 @@ The repository does **not** implement 100% of the full requirements. Core resear
 
 ## Validation
 
-`tests/test_requirements_audit.py` adds 12 synthetic regressions for the above behavior, including revocation and planning-input races. Models remain explicit test doubles. Local Python compilation, JavaScript syntax and diff checks passed. Full local tests could not start because boto3/jsonschema are unavailable and the restricted package environment did not supply the requirements. The existing GitHub Actions workflow runs all Python, DOM/HTTP and Chromium suites three times, template lint and container checks. Refer to the PR's exact-commit CI result; this document does not predeclare its success.
+`tests/test_requirements_audit.py` adds 13 synthetic regressions for the above behavior, including revocation and planning-input races. Models remain explicit test doubles. Local Python compilation, JavaScript syntax and diff checks passed. Full local tests could not start because boto3/jsonschema are unavailable and the restricted package environment did not supply the requirements. The existing GitHub Actions workflow runs all Python, DOM/HTTP and Chromium suites three times, template lint and container checks. Refer to the PR's exact-commit CI result; this document does not predeclare its success.
 
 ## Remaining acceptance work
 
