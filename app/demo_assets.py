@@ -176,7 +176,7 @@ def load_pack(service, user, pack, publish_insights=False):
         interview = service.create_conversation(user, {"title": "가상 광고주 FGI · 실제 고객 검증 아님", "mode": "interview",
             "prd_id": prd["id"], "persona_ids": [r["id"] for r in saved_people.values()],
             "objective": "소재·타깃 분석과 다음 실험 제안의 필요 조건 및 반대 의견 탐색. 합성 채널 기록은 독립 고객 수가 아님."})
-        return {"pack_id": manifest["pack_id"], "content_digest": pack.digest(),
+        receipt = {"pack_id": manifest["pack_id"], "content_digest": pack.digest(),
             "source_id": sources["research"]["id"] if "research" in manifest else None,
             "source_ids": {key: row["id"] for key, row in sources.items()}, "insight_provenance": provenance,
             "insight_ids": {k: r["id"] for k, r in insights.items()}, "voc_ids": {k: r["id"] for k, r in voc.items()},
@@ -184,6 +184,9 @@ def load_pack(service, user, pack, publish_insights=False):
             "research_conversation_id": research["id"], "interview_conversation_id": interview["id"],
             "insights_published": publish_insights, "personas_deferred": len(people) - len(saved_people),
             "model_called": False}
+        from .assets import register_templates
+        receipt['persona_template_ids'] = register_templates(service, user, people, receipt)
+        return receipt
     except (KeyError, TypeError, AttributeError):
         raise AppError("자산 매니페스트 또는 참조 형식을 확인하세요.")
 

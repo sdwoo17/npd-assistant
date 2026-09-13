@@ -73,13 +73,23 @@ def decode_file(body):
             text = "\n".join(p.extract_text() or "" for p in pdf.pages)
         elif suffix == ".docx":
             from docx import Document
+            from docx.text.paragraph import Paragraph
+            from docx.table import Table
             with zipfile.ZipFile(io.BytesIO(data)) as z:
                 if len(z.infolist()) > 1000 or sum(f.file_size for f in z.infolist()) > 20 * 1024 * 1024:
                     raise AppError("문서 압축 해제 크기가 너무 큽니다.")
             doc = Document(io.BytesIO(data))
-            text = "\n".join([p.text for p in doc.paragraphs] + [" | ".join(c.text for c in row.cells) for t in doc.tables for row in t.rows])
+            blocks = []
+            for item in doc.element.body:
+                if item.tag.endswith('}p'):
+                    blocks.append(Paragraph(item, doc).text)
+                elif item.tag.endswith('}tbl'):
+                    blocks.extend(' | '.join(c.text for c in row.cells) for row in Table(item, doc).rows)
+            text = '\n'.join(blocks)
+        elif suffix == '.pptx':
+            text = pptx_text(data)
         else:
-            raise AppError("PDF, DOCX, Markdown, TXT, CSV를 지원합니다.")
+            raise AppError("PDF, DOCX, PPTX, Markdown, TXT, CSV를 지원합니다.")
     except AppError:
         raise
     except Exception:
@@ -89,6 +99,44 @@ def decode_file(body):
     if len(text) > 150000:
         raise AppError("추출 텍스트는 150,000자 이하이어야 합니다.")
     return Path(filename).name, text, hashlib.sha256(data).hexdigest()
+
+
+def pptx_text(data):
+    """Visible slide text in presentation order; no images, notes or OCR claims."""
+    import posixpath
+    import xml.etree.ElementTree as ET
+    ns = {'p': 'http://schemas.openxmlformats.org/presentationml/2006/main',
+          'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+          'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'}
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        entries = z.infolist()
+        if (len(entries) > 1000 or len({i.filename for i in entries}) != len(entries)
+                or sum(i.file_size for i in entries) > 20 * 1024 * 1024):
+            raise AppError('PPTX 압축 해제 한도를 초과했습니다.')
+        def xml(name):
+            raw = z.read(name)
+            declarations = raw.replace(b'\x00', b'').upper()
+            if b'<!DOCTYPE' in declarations or b'<!ENTITY' in declarations:
+                raise AppError('문서에 허용되지 않는 XML 선언이 있습니다.')
+            return ET.fromstring(raw)
+        rels = {r.attrib['Id']: r.attrib for r in xml('ppt/_rels/presentation.xml.rels')}
+        slides = xml('ppt/presentation.xml').findall('p:sldIdLst/p:sldId', ns)
+        if not 1 <= len(slides) <= 100:
+            raise AppError('PPTX는 1~100장이어야 합니다.')
+        content = []
+        for index, slide in enumerate(slides, 1):
+            rel = rels[slide.attrib['{' + ns['r'] + '}id']]
+            path = posixpath.normpath(posixpath.join('ppt', rel['Target']))
+            if rel.get('TargetMode') == 'External' or not re.fullmatch(r'ppt/slides/[^/]+\.xml', path):
+                raise AppError('슬라이드 참조가 올바르지 않습니다.')
+            paragraphs = []
+            for paragraph in xml(path).findall('.//a:p', ns):
+                value = ''.join(node.text or '' for node in paragraph.findall('.//a:t', ns))
+                if value.strip():
+                    paragraphs.append(value)
+            if paragraphs:
+                content.append('# 슬라이드 ' + str(index) + '\n' + '\n'.join(paragraphs))
+        return '\n\n'.join(content)
 
 
 def parse_csv(value, features=None):
@@ -148,15 +196,30 @@ def terms(value):
 
 
 def retrieve(records, query, limit=24):
+    """Field-weighted, length-normalized lexical retrieval over authorized rows.
+
+    Taxonomy terms are weak recall hints, never substitutes for a claim in the
+    record itself. No raw source or cross-project index participates here.
+    """
     query_terms = terms(query)
-    if not query_terms:
+    if not query_terms or not records or limit <= 0:
         return []
-    bags = [terms(" ".join(str(r.get(k, "")) for k in ("text", "title", "feature", "segment", "problem", "need", "competitor", "feature_names", "feature_terms"))) for r in records]
+    weights = {"title": 3.0, "text": 2.0, "problem": 1.5, "need": 1.5,
+               "applicability": 1.0, "limitations": 0.7, "segment": 0.7,
+               "competitor": 0.8, "feature_names": 0.25, "feature_terms": 0.15}
+    fields = [{k: terms(str(r.get(k, ""))) for k in weights} for r in records]
+    bags = [set().union(*row.values()) for row in fields]
+    averages = {k: max(1, sum(len(row[k]) for row in fields) / len(records)) for k in weights}
     document_frequency = {term: sum(term in bag for bag in bags) for term in query_terms}
     scored = []
-    for record, bag in zip(records, bags):
+    for record, row, bag in zip(records, fields, bags):
         common = query_terms & bag
-        score = sum(math.log(1 + len(records) / (1 + document_frequency[t])) * (1.5 if t.startswith("domain:") else 1) for t in common)
+        score = 0.0
+        for term in common:
+            tf = sum(weight / (0.4 + 0.6 * len(row[k]) / averages[k])
+                     for k, weight in weights.items() if term in row[k])
+            idf = math.log(1 + (len(records) - document_frequency[term] + 0.5) / (document_frequency[term] + 0.5))
+            score += idf * tf * 2.2 / (tf + 1.2) * (0.2 if term.startswith("domain:") else 1)
         if score:
             scored.append((score, record))
     return [r for _, r in sorted(scored, key=lambda x: (-x[0], x[1]["id"]))[:limit]]

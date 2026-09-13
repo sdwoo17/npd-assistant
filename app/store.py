@@ -47,6 +47,7 @@ class Store:
             CREATE UNIQUE INDEX IF NOT EXISTS persona_alias ON records(project_id,json_extract(body,'$.alias')) WHERE kind='persona';
             CREATE UNIQUE INDEX IF NOT EXISTS turn_request ON records(project_id,json_extract(body,'$.conversation_id'),json_extract(body,'$.request_id')) WHERE kind='turn';
             CREATE TABLE IF NOT EXISTS login_attempts(key TEXT PRIMARY KEY,attempts INTEGER NOT NULL,window_start REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS account_state(user_id TEXT PRIMARY KEY,disabled INTEGER NOT NULL DEFAULT 0);
             """)
             columns = {r["name"] for r in db.execute("PRAGMA table_info(sessions)")}
             if "project_id" not in columns:
@@ -73,12 +74,18 @@ class Store:
         return self.cipher.decrypt(text.encode()).decode()
 
     def create_user(self, email, password, role, project_id):
-        if role not in ("owner", "po") or len(password) < 12:
+        import re
+        if not isinstance(email, str) or len(email) > 300 or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email.strip()):
+            raise AppError('이메일 형식을 확인하세요.')
+        if role not in ("owner", "po") or not isinstance(password, str) or not 12 <= len(password) <= 1024:
             raise AppError("역할 또는 비밀번호를 확인하세요. 비밀번호는 12자 이상이어야 합니다.")
         salt = secrets.token_hex(16)
         digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 260000).hex()
         uid = str(uuid.uuid4())
         with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if db.execute('SELECT 1 FROM users WHERE email=?', (email.strip().lower(),)).fetchone():
+                raise AppError('이미 등록된 계정입니다.', 409)
             db.execute("INSERT INTO users VALUES(?,?,?,?,?,?)", (uid, email.strip().lower(), salt, digest, role, project_id))
             db.execute("INSERT OR IGNORE INTO projects VALUES(?,?)", (project_id, project_id))
             db.execute("INSERT INTO memberships VALUES(?,?,?)", (uid, project_id, role))
@@ -102,6 +109,11 @@ class Store:
             raise AppError("이메일 또는 비밀번호를 확인하세요.", 401)
         token, csrf = secrets.token_urlsafe(40), secrets.token_urlsafe(24)
         with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            current = db.execute('SELECT password_hash FROM users WHERE id=?', (row['id'],)).fetchone()
+            disabled = db.execute('SELECT disabled FROM account_state WHERE user_id=?', (row['id'],)).fetchone()
+            if not current or current['password_hash'] != row['password_hash'] or (disabled and disabled['disabled']):
+                raise AppError('이메일 또는 비밀번호를 확인하세요.', 401)
             db.execute("DELETE FROM login_attempts WHERE key=?", (key,))
             db.execute("DELETE FROM sessions WHERE expires<?", (time.time(),))
             db.execute("INSERT INTO sessions(token_hash,user_id,csrf,expires,project_id) VALUES(?,?,?,?,?)", (hashlib.sha256(token.encode()).hexdigest(), row["id"], csrf, time.time() + 8 * 3600, row["project_id"]))
@@ -120,7 +132,7 @@ class Store:
 
     def authenticate(self, token):
         with self.db() as db:
-            row = db.execute("SELECT u.id,u.email,m.role,s.project_id,s.csrf FROM sessions s JOIN users u ON u.id=s.user_id JOIN memberships m ON m.user_id=u.id AND m.project_id=s.project_id WHERE token_hash=? AND expires>?", (hashlib.sha256(token.encode()).hexdigest(), time.time())).fetchone()
+            row = db.execute("SELECT u.id,u.email,m.role,s.project_id,s.csrf FROM sessions s JOIN users u ON u.id=s.user_id JOIN memberships m ON m.user_id=u.id AND m.project_id=s.project_id WHERE token_hash=? AND expires>? AND NOT EXISTS (SELECT 1 FROM account_state a WHERE a.user_id=u.id AND a.disabled=1)", (hashlib.sha256(token.encode()).hexdigest(), time.time())).fetchone()
         if not row:
             raise AppError("로그인이 필요합니다.", 401)
         return dict(row)

@@ -283,3 +283,26 @@ test("browser: responsive workspace and text rendering do not execute markup", a
     await ctx.close();
   }
 });
+
+test("browser: owner approval activates a deferred persona for PO tagging", async () => {
+  const owner = await login("owner");
+  try {
+    await nav(owner.page, "research");
+    const row = owner.page.locator("#persona-template-list .record").filter({hasText: "검토프로필"});
+    await row.getByText("검토프로필 · 근거 공개 필요").waitFor();
+    const insight = owner.page.locator("#insight-list .record").filter({hasText: "템플릿 검토 근거"});
+    await insight.getByRole("button", {name: "이 인사이트 공개", exact: true}).click();
+    await row.getByRole("button", {name: "검토한 프로필 활성화"}).click();
+    await row.getByText("검토프로필 · 활성화됨").waitFor();
+    assert.equal(await row.getByRole("button", {name: "검토한 프로필 활성화"}).count(), 0);
+    assert.deepEqual(owner.errors, []);
+  } finally { await owner.ctx.close(); }
+  const po = await login("po");
+  try {
+    const tag = po.page.locator("#chat-personas button").filter({hasText: "검토프로필"});
+    await tag.click();
+    assert.match(await po.page.inputValue("#message-input"), /@검토프로필/);
+    await ask(po.page, "@검토프로필 소재 리포트 비교 조건을 말씀해 주세요.");
+    assert.deepEqual(po.errors, []);
+  } finally { await po.ctx.close(); }
+});

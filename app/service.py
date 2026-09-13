@@ -10,13 +10,14 @@ from .research import Research, owner
 from .voc import Voc
 from .planning import Planning
 from .chat import Chat
+from .assets import Assets
 from .store import AppError, timestamp
 
 # Public compatibility export for earlier integrations.
 from .contracts import validate_answer as cited
 
 
-class Service(Research, Voc, Planning, Chat):
+class Service(Research, Voc, Planning, Chat, Assets):
     def __init__(self, store, model):
         self.store, self.model = store, model
         self._locks = {}
@@ -113,16 +114,20 @@ class Service(Research, Voc, Planning, Chat):
             if scope[k]:
                 selected = [e for e in selected if (scope[k] in e["feature_ids"] if k == "feature" else e.get(k) == scope[k])]
         matches = retrieve(selected, query, 24)
-        method = "weighted_lexical_multilingual_aliases"
+        method = "field_weighted_bm25_multilingual_aliases"
         if not matches and any(s in query for s in ("서비스의 방향", "이 서비스", "기획 방향", "project direction", "service direction")):
             matches = selected[:24]
             method = "explicit_project_context"
-        # Preserve available research and VoC perspectives if either is underrepresented.
-        for kind in ("insight", "voc"):
-            if not any(e["kind"] == kind for e in matches):
-                extra = retrieve([e for e in selected if e["kind"] == kind], query, 1)
-                if extra:
-                    matches = matches[:23] + extra
+        # Channel volume must not bury research in hundreds of similar VoC rows.
+        # Reserve up to eight relevant insights and eight VoC; fill spare capacity
+        # from global rank. Never add an unrelated row just to meet a quota.
+        reserved = []
+        if method != "explicit_project_context":
+            for kind in ("insight", "voc"):
+                reserved += retrieve([e for e in selected if e["kind"] == kind], query, 8)
+            ids = {e["id"] for e in reserved}
+            pool = reserved + [e for e in matches if e["id"] not in ids][:24 - len(reserved)]
+            matches = retrieve(pool, query, 24)
         return matches, {"method": method, "retrieved": len(matches), "eligible": len(selected), "filters": scope, "limit": 24}
 
     def export_package(self, user, cid):
@@ -192,6 +197,8 @@ class Service(Research, Voc, Planning, Chat):
         parsed = urlparse(route)
         path, query = parsed.path, {k: v[-1] for k, v in parse_qs(parsed.query).items()}
         p = user["project_id"]
+        if path == "/api/assets/persona-templates":
+            return self.template_previews(user)
         if path == "/api/model/status":
             owner(user)
             if getattr(self.model, "provider", None) != "bedrock":
@@ -231,6 +238,7 @@ class Service(Research, Voc, Planning, Chat):
     def post(self, user, route, body):
         p = user["project_id"]
         routes = {"/api/research/upload": self.research_upload, "/api/research/extract": self.research_extract,
+            "/api/assets/activate-personas": self.activate_templates,
             "/api/model/test": self.test_model,
             "/api/insights": self.insight_save, "/api/insights/update": self.insight_save, "/api/insights/release": self.insight_release,
             "/api/jobs/retry": self.retry_job, "/api/features/import": self.import_features,

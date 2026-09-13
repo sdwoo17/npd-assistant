@@ -12,6 +12,8 @@ This is a new application contract, not an AXIOM API specification. All POST bod
 | GET/POST /api/projects | Session | List memberships / create a new empty project with title |
 | POST /api/projects/switch | Session | project_id → new CSRF token; membership verified |
 | POST /api/projects/members | Owner | email,role → add an already registered user to current project |
+| GET /api/assets/persona-templates | Owner | Decrypted profile definitions for review, missing evidence IDs, current active/blocked/ready/requires_review status; never a PO evidence endpoint |
+| POST /api/assets/activate-personas | Owner | template_ids (1–8 unique), versions `{template_id: expected_version}` → current personas, created count. Atomic creation against current published evidence. Repeated activation returns current profiles without replacing PO edits. |
 
 ## Research
 

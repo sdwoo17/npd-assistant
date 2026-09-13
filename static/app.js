@@ -499,6 +499,24 @@ function renderPersonas() {
   );
 }
 async function renderResearch() {
+  const templates = await api("/api/assets/persona-templates");
+  $("persona-template-list").replaceChildren(...templates.map((t) => {
+    const row = node("div", null, "record");
+    const labels = {ready: "활성화 가능", blocked: "근거 공개 필요", active: "활성화됨", requires_review: "페르소나 근거 재검토 필요"};
+    row.append(node("strong", t.definition.name + " · " + labels[t.status]),
+      node("p", t.definition.segment + " / " + t.definition.goals),
+      node("p", "제약: " + t.definition.constraints),
+      node("small", "합성 프로필 · 실제 고객 검증 아님"));
+    if (t.status === "ready") row.append(button("검토한 프로필 활성화", async () => {
+      await api("/api/assets/activate-personas", {template_ids: [t.id], versions: {[t.id]: t.version}});
+      await refresh();
+      await renderResearch();
+      notice("가상 프로필을 활성화했습니다. 채팅에서 @태그로 선택하세요.");
+    }));
+    if (t.status === "blocked") row.append(node("small", "현재 사용할 수 없는 근거 " + t.missing_evidence_ids.length + "개"));
+    return row;
+  }));
+  if (!templates.length) $("persona-template-list").append(node("p", "등록된 자산 팩 프로필이 없습니다. 페르소나 화면에서 직접 생성할 수 있습니다."));
   const data = await api("/api/research");
   state.sources = data.sources;
   fillSelect(
