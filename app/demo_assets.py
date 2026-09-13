@@ -73,6 +73,38 @@ def keyed(rows, field, limit):
     return result
 
 
+def research_sources(pack, manifest, insights):
+    """Validate document attribution before creating any source records.
+
+    Legacy packs contain one `research` object. Multiple-source packs must name
+    a source_key on every insight; a missing reference never falls back to the
+    first document. Locators remain in the owner's private import receipt.
+    """
+    if ("research" in manifest) == ("research_sources" in manifest):
+        raise AppError("research 또는 research_sources 중 하나만 지정하세요.")
+    if "research" in manifest:
+        sources = {"research": manifest["research"]}
+    else:
+        sources = keyed(manifest["research_sources"], "key", 64)
+    uploads, provenance = {}, {}
+    for key, row in sources.items():
+        payload = pack.upload(row["file"], title=text(row, "title", 200))
+        decode_file(payload)  # reject unsupported or oversized text before writes
+        digest = hashlib.sha256(pack.read(row["file"])).hexdigest()
+        if "sha256" in row and row["sha256"] != digest:
+            raise AppError("리서치 자산의 SHA-256이 일치하지 않습니다.")
+        uploads[key] = payload
+    for key, row in insights.items():
+        source_key = row.get("source_key", "research" if "research" in manifest else None)
+        if not isinstance(source_key, str) or source_key not in sources:
+            raise AppError("모든 인사이트에 유효한 리서치 source_key가 필요합니다.")
+        locator = row.get("source_locator", "")
+        if not isinstance(locator, str) or len(locator) > 500:
+            raise AppError("인사이트의 원문 위치는 500자 이내의 문자열이어야 합니다.")
+        provenance[key] = {"source_key": source_key, "source_locator": locator}
+    return uploads, provenance
+
+
 def load_pack(service, user, pack, publish_insights=False):
     """Populate an EMPTY staging project; caller owns cleanup on any failure."""
     owner(user)
@@ -87,6 +119,7 @@ def load_pack(service, user, pack, publish_insights=False):
         taxonomy = service.features(p)
         specs = keyed(pack.json_file(manifest["insights"]), "key", 200)
         people = keyed(pack.json_file(manifest["personas"]), "key", 8)
+        uploads, provenance = research_sources(pack, manifest, specs)
         voc_specs = manifest["voc"]
         if not isinstance(voc_specs, list) or not 1 <= len(voc_specs) <= 10:
             raise AppError("VoC 파일 목록은 1~10개여야 합니다.")
@@ -118,9 +151,9 @@ def load_pack(service, user, pack, publish_insights=False):
                     or not set(person["insights"]).issubset(specs)
                     or not set(person["voc_refs"]).issubset(external_ids)):
                 raise AppError("모든 페르소나는 리서치와 VoC의 유효한 참조가 필요합니다.")
-        src = manifest["research"]
-        source = service.research_upload(user, pack.upload(src["file"], title=text(src, "title", 200)))
-        insights = {key: service.insight_save(user, {**row, "source_id": source["id"]})
+        sources = {key: service.research_upload(user, payload) for key, payload in uploads.items()}
+        insights = {key: service.insight_save(user, {**row,
+                    "source_id": sources[provenance[key]["source_key"]]["id"]})
                     for key, row in specs.items()}
         for item in voc_specs:
             result = service.voc_upload(user, pack.upload(item["file"], source_name=item["source_name"]))
@@ -143,7 +176,9 @@ def load_pack(service, user, pack, publish_insights=False):
         interview = service.create_conversation(user, {"title": "가상 광고주 FGI · 실제 고객 검증 아님", "mode": "interview",
             "prd_id": prd["id"], "persona_ids": [r["id"] for r in saved_people.values()],
             "objective": "소재·타깃 분석과 다음 실험 제안의 필요 조건 및 반대 의견 탐색. 합성 채널 기록은 독립 고객 수가 아님."})
-        return {"pack_id": manifest["pack_id"], "content_digest": pack.digest(), "source_id": source["id"],
+        return {"pack_id": manifest["pack_id"], "content_digest": pack.digest(),
+            "source_id": sources["research"]["id"] if "research" in manifest else None,
+            "source_ids": {key: row["id"] for key, row in sources.items()}, "insight_provenance": provenance,
             "insight_ids": {k: r["id"] for k, r in insights.items()}, "voc_ids": {k: r["id"] for k, r in voc.items()},
             "persona_ids": {k: r["id"] for k, r in saved_people.items()}, "prd_id": prd["id"],
             "research_conversation_id": research["id"], "interview_conversation_id": interview["id"],

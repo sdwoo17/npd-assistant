@@ -29,7 +29,7 @@ def main():
     except (AppError, OSError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    print(json.dumps({"status": "installed", "pack_id": result["pack_id"], "voc": len(result["voc_ids"]),
+    print(json.dumps({"status": "installed", "pack_id": result["pack_id"], "sources": len(result["source_ids"]), "voc": len(result["voc_ids"]),
         "insights": len(result["insight_ids"]), "personas": len(result["persona_ids"]),
         "insights_published": result["insights_published"], "personas_deferred": result["personas_deferred"],
         "model_called": False, "note": "가상 자료 적재 완료. AI 채팅은 별도 모델 연결이 필요합니다."}, ensure_ascii=False))

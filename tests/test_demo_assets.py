@@ -1,5 +1,6 @@
 """Private pack importer contracts; only independent synthetic fixtures live here."""
 import csv
+import hashlib
 import json
 import tempfile
 import unittest
@@ -149,3 +150,66 @@ class DemoAssetTests(unittest.TestCase):
         (self.assets / "manifest.json").write_text("{")
         with self.assertRaises(AppError): self.install()
         self.assertFalse(self.target.exists())
+
+    def multi_source(self):
+        (self.assets / "second.md").write_text("SECOND-PRIVATE-CANARY\n다른 원천의 합성 연구")
+        def manifest(value):
+            first = value.pop("research")
+            value["research_sources"] = [{**first, "key": "R1"},
+                {"key": "R2", "file": "second.md", "title": "별도 비공개 연구",
+                 "sha256": hashlib.sha256((self.assets / "second.md").read_bytes()).hexdigest()}]
+        self.change_json("manifest.json", manifest)
+        def insights(rows):
+            rows[0].update(source_key="R1", source_locator="paragraph-001")
+            rows.append({**rows[0], "key": "I2", "source_key": "R2", "source_locator": "page-002", "text": "별도 비교 가설."})
+        self.change_json("insights.json", insights)
+        self.change_json("personas.json", lambda rows: [r.update(insights=["I2"]) for r in rows[4:]])
+
+    def test_multiple_documents_keep_independent_provenance_and_revocation(self):
+        self.multi_source()
+        result, store, service, users = self.install()
+        project = users["po"]["project_id"]
+        self.assertIsNone(result["source_id"])
+        self.assertEqual(len(result["source_ids"]), 2)
+        for key, source in (("I1", "R1"), ("I2", "R2")):
+            self.assertEqual(store.get(project, "insight", result["insight_ids"][key])["source_id"], result["source_ids"][source])
+        self.assertEqual(result["insight_provenance"]["I2"]["source_locator"], "page-002")
+        service.insight_release(users["owner"], {"insight_id": result["insight_ids"]["I1"], "published": False})
+        ids = {r["id"] for r in service.knowledge(project)}
+        self.assertNotIn(result["insight_ids"]["I1"], ids)
+        self.assertIn(result["insight_ids"]["I2"], ids)
+        for key, rid in result["persona_ids"].items():
+            self.assertEqual(service.persona_active(project, store.get(project, "persona", rid)), int(key[1:]) >= 4)
+        bootstrap = json.dumps(service.get(users["po"], "/api/bootstrap"))
+        for canary in (CANARY, "SECOND-PRIVATE-CANARY"):
+            self.assertNotIn(canary, bootstrap)
+        for rid in result["source_ids"].values():
+            with self.assertRaises(AppError): service.get(users["po"], "/api/research/raw/" + rid)
+        self.assertEqual(self.model.calls, [])
+
+    def test_multiple_document_reference_and_integrity_failure_loop_is_atomic(self):
+        self.multi_source()
+        mutations = [
+            ("manifest.json", lambda obj: obj.update(research={"file": "research.md", "title": "ambiguous"})),
+            ("manifest.json", lambda obj: obj.pop("research_sources")),
+            ("manifest.json", lambda obj: obj.update(research_sources=[])),
+            ("manifest.json", lambda obj: obj.update(research_sources=obj["research_sources"] * 33)),
+            ("manifest.json", lambda obj: obj["research_sources"][1].update(key="R1")),
+            ("manifest.json", lambda obj: obj["research_sources"][1].update(sha256="0" * 64)),
+            ("manifest.json", lambda obj: obj["research_sources"][1].update(file="../outside.md")),
+            ("insights.json", lambda rows: rows[0].pop("source_key")),
+            ("insights.json", lambda rows: rows[1].update(source_key="MISSING")),
+            ("insights.json", lambda rows: rows[0].update(source_key=["R1"])),
+            ("insights.json", lambda rows: rows[0].update(source_locator=["page-001"])),
+            ("insights.json", lambda rows: rows[0].update(source_locator="x" * 501)),
+        ]
+        (self.root / "outside.md").write_text("private outside source")
+        for index, (name, mutate) in enumerate(mutations):
+            with self.subTest(case=index):
+                path = self.assets / name; original = path.read_bytes()
+                self.change_json(name, mutate)
+                with self.assertRaises(AppError): self.install()
+                self.assertFalse(self.target.exists())
+                self.assertEqual(list(self.root.glob("npd-demo-staging-*")), [])
+                self.assertEqual(self.model.calls, [])
+                path.write_bytes(original)

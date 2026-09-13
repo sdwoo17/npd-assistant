@@ -18,6 +18,7 @@ python manage.py serve --data-dir /path/to/new-data
 | 항목 | 형식 |
 | --- | --- |
 | research | `{file, title}`: 소유자 원문 파일 |
+| research_sources | 복수 문서일 때 `research` 대신 `[{key, file, title, sha256?}]`, 최대 64개. 두 형식을 함께 쓰지 않는다. |
 | features | 기능 트리 JSON의 상대 경로. `/api/features/import` 형식 |
 | insights | 인사이트 배열 JSON. 각 항목은 고유 `key`와 `/api/insights`의 내용 필드 |
 | voc | `[{file, source_name}]`: 채널별 UTF-8 CSV, 최대 10개 파일 |
@@ -26,6 +27,10 @@ python manage.py serve --data-dir /path/to/new-data
 | annotations | 선택. `{records:[{external_id, feature_ids}]}` JSON. 모든 VoC와 정확히 대응 |
 
 각 페르소나는 리서치와 VoC를 모두 참조해야 한다. 인사이트 공유 후 실제 서비스의 페르소나 저장 경로를 통해 관찰 인용·근거 버전·합성 여부를 연결한다. 합성 VoC를 실제 고객 자료로 가져오려 하면 전체 설치를 거부한다. 외부 ID는 채널 간에도 고유해야 한다.
+
+복수 문서의 인사이트에는 `source_key`를 반드시 지정한다. 누락·존재하지 않는 참조는 전체 설치를 거절하며 첫 문서를 임의로 출처로 사용하지 않는다. `source_locator`에 원문 페이지·문단 위치를 500자까지 기록할 수 있다. 원문 키와 위치는 소유자용 `demo-import.json`의 `insight_provenance`에 보존되고 PO 지식에는 포함되지 않는다. 문서별 내부 ID는 `source_ids`에 기록한다. 기존 단일 문서 형식은 `source_id`도 유지하며 복수 형식에서는 이 필드가 `null`이다. 인사이트 공개 철회와 원문 버전 변경은 해당 출처의 근거에만 영향을 준다.
+
+원본 ZIP을 이 도구에 직접 전달하지 않는다. PDF·DOCX·텍스트의 기존 파일 및 텍스트 한도는 유지한다. 큰 문서나 PPTX를 별도 과정에서 텍스트로 변환·분할했다면 원본 파일의 해시, 문단/페이지 위치, 이미지·OCR 누락 여부를 비공개 자산에 기록한다. 변환본을 완전한 원본으로 표시하지 않는다. 선택적인 `sha256`을 제공하면 파일 바이트와 대조하며 불일치 시 설치하지 않는다. 내부 계획·외부 발표·작성자 추정·합성 VoC를 분리하고 인사이트를 검토한 뒤 공유한다.
 
 기능 주석은 작성자가 승인한 데모 시드다. AI 분류 성과로 계산하지 않는다. 무라벨 분류를 검증하려면 별도 프로젝트에 무라벨 CSV를 업로드하고 AI 분류 결과를 독립적으로 평가한다. 같은 사건의 여러 채널 기록은 외부 ID가 달라도 독립 고객 수가 아니다.
 
