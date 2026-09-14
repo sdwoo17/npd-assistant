@@ -1051,3 +1051,31 @@ form [type="submit"] {
     max-width: 100%;
   }
 }
+.stage-nav {border-bottom:1px solid #d9e3df;padding-bottom:12px}
+.stage-nav button {font-weight:700}
+.planning-tools {display:flex;flex-wrap:wrap;gap:4px;margin:12px 0}
+.planning-tools button {font-size:12px;padding:7px}
+#definition-tabs,.planning-toolbar,.source-tabs {display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+#definition-tabs button {padding:10px}
+#definition-tabs .active {background:#125d4a;color:white}
+.planning-grid {display:grid;grid-template-columns:minmax(220px,1fr) minmax(300px,1.5fr) minmax(230px,1fr);gap:16px;align-items:start}
+.planning-grid>.panel {min-width:0;padding:18px}
+.planning-grid textarea,.planning-grid input,.planning-grid select {max-width:100%;box-sizing:border-box}
+.planning-list {display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.planning-status {font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
+.planning-entry {border:1px solid #dce6e1;border-radius:8px;padding:10px;margin:10px 0}
+.planning-entry label {margin-top:6px}
+.planning-entry pre {white-space:pre-wrap;overflow-wrap:anywhere}
+.source-scroll {max-height:560px;overflow:auto}
+.source-scroll canvas {max-width:100%;height:auto;cursor:crosshair;display:block}
+.source-scroll.zoomed canvas {max-width:none;width:150%}
+.provenance {display:block;font-size:12px;padding:4px;margin:3px 0;background:#eef3ef;color:#275142}
+.source-selected {outline:3px solid #c2691c;outline-offset:2px}
+.story-map {overflow:auto}.story-map td {vertical-align:top;min-width:160px}.story-map th {white-space:nowrap}
+#draft-prompt-dialog {width:min(560px,90vw);border:1px solid #c5d8cd;border-radius:12px;padding:24px}
+#draft-prompt-dialog::backdrop {background:#10292288}
+#draft-prompt-dialog textarea {width:100%;box-sizing:border-box}
+.mobile-planning-tabs {display:none}
+@media(max-width:1100px){.planning-grid{grid-template-columns:1fr 1.4fr}.planning-review{grid-column:1/-1}}
+@media(max-width:700px){.planning-grid{display:block}.mobile-planning-tabs{display:flex;gap:6px;margin-bottom:12px}.planning-grid>.mobile-inactive{display:none}.stage-nav{display:grid;grid-template-columns:1fr 1fr}.stage-nav button{padding:7px}.planning-tools{margin:5px 0}.planning-grid>.panel{margin-bottom:12px}#definition-tabs button{font-size:12px}}
+@media(min-width:901px){.chat-panel{height:max(480px,calc(100dvh - 400px))}.evidence-panel{max-height:max(480px,calc(100dvh - 400px))}}

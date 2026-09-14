@@ -1,0 +1,291 @@
+"use strict";
+// Planning intentions are project-private. Model output is always a reviewable draft.
+(() => {
+  const stages = {product:"2.1 프로덕트정의",stories:"2.2 사용자스토리정의",requirements:"2.3 요구사항 정의",constraints:"2.4 비기능요구사항 정의",goals:"2.5 목표설명",prd:"2.6 PRD생성"};
+  const labels = {title:"제목",actor:"사용자·역할",situation:"상황",action:"원하는 행동",value:"기대 가치",relationship:"관련 사용자·관계",problem:"관련 문제",validation_task:"문제 가설 검증 과제",priority:"우선순위",epic:"상위 에픽",journey:"사용자 여정",release:"릴리스",mvp:"MVP 포함",new_problem:"새 문제 가설",scenarios:"정상·예외 흐름",acceptance_criteria:"수용 기준",questions:"확인 질문",assumptions:"가정"};
+  let p = {stage:"product",assets:[],stories:[],documents:[],results:[],drafts:[],runs:{},story:null,document:null,activeAsset:null};
+  let serial=0, promptAction=null, editorFields={}, canvasView=null;
+  function pf(root,key,label,value="",type="textarea") {
+    const id="planning-field-"+(++serial), input=node(type==="select"?"select":type==="checkbox"?"input":type==="text"?"input":"textarea");
+    input.id=id;input.name=key;
+    if(type==="checkbox"){input.type="checkbox";input.checked=!!value;}else input.value=value??"";
+    const l=node("label",label);l.htmlFor=id;root.append(l,input);return input;
+  }
+  function pick(root,key,label,options,selected="",multiple=false){
+    const input=pf(root,key,label,"","select");input.multiple=multiple;
+    for(const [value,title] of options){const option=node("option",title);option.value=value;option.selected=multiple?(selected||[]).includes(value):value===selected;input.append(option);}return input;
+  }
+  function values(select){return [...select.selectedOptions].map(x=>x.value);}
+  function checked(input){return input.type==="checkbox"?input.checked:input.value;}
+  function lines(input){return input.value.split("\n").map(s=>s.trim()).filter(Boolean);}
+  function download(name,content,type="text/markdown;charset=utf-8"){
+    const url=URL.createObjectURL(new Blob([content],{type})),a=node("a");a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  function exportButtons(root,path,body,name){
+    root.append(button("Markdown 내보내기",async()=>{const out=await api(path,body);download(name+".md",out.markdown);}),
+      button("구조화 설계안 내보내기",async()=>{const out=await api(path,body);download(name+".json",JSON.stringify(out.package,null,2),"application/json");}));
+  }
+  function prompt(title,action){
+    promptAction=action;$("draft-prompt-title").textContent=title;$("draft-prompt").value="";
+    const dialog=$("draft-prompt-dialog");if(dialog.showModal)dialog.showModal();else dialog.setAttribute("open","");$("draft-prompt").focus();
+  }
+  function closePrompt(){const dialog=$("draft-prompt-dialog");if(dialog.close)dialog.close();else dialog.removeAttribute("open");promptAction=null;}
+  $("draft-prompt-cancel").onclick=closePrompt;
+  $("draft-prompt-form").onsubmit=guard(async()=>{
+    const intent=$("draft-prompt").value.trim();if(!intent)throw new Error("이번 초안의 의도를 입력하세요.");
+    const action=promptAction;if(!action)return;notice("입력한 의도로 초안을 작성 중입니다.");await action(intent);closePrompt();notice("초안을 저장했습니다. 출처와 확인 질문을 검토하세요.");
+  });
+  function repeat(root,title,initial,specs){
+    const details=node("details");details.open=true;details.append(node("summary",title));root.append(details);
+    const list=node("div");details.append(list);const rows=[];
+    function add(row={}){
+      const wrap=node("div",null,"planning-entry"),fields={};list.append(wrap);
+      for(const [key,label,type,opts] of specs)fields[key]=type==="select"?pick(wrap,key,label,opts,row[key]??opts[0][0]):pf(wrap,key,label,Array.isArray(row[key])?row[key].join("\n"):row[key]??"",type);
+      wrap.append(button("항목 삭제",()=>wrap.remove()));rows.push({wrap,fields,row});
+    }
+    initial.forEach(add);details.append(button(title+" 추가",()=>add()));
+    return ()=>rows.filter(r=>r.wrap.parentNode).map(({fields,row})=>{
+      const out={...row};for(const [key,,type] of specs)out[key]=type==="lines"?lines(fields[key]):checked(fields[key]);return out;
+    });
+  }
+  async function load(){
+    const [assets,stories,defs,results,drafts,runs]=await Promise.all([api("/api/planning-assets"),api("/api/stories"),api("/api/definitions"),api("/api/research-results"),api("/api/story-drafts"),api("/api/planning-extractions")]);
+    Object.assign(p,{assets,stories,documents:defs.documents,results,drafts});
+    p.runs={};for(const run of runs)if(run.status==="completed")p.runs[run.asset_id]=run;
+    if(p.story)p.story=stories.find(r=>r.id===p.story.id&&!r.redacted)||null;
+    if(p.document)p.document=defs.documents.find(r=>r.id===p.document.id&&!r.redacted)||null;
+  }
+  function mobileTabs(root,panels){
+    const tabs=node("div",null,"mobile-planning-tabs");root.append(tabs);
+    function select(index){panels.forEach((panel,i)=>panel.classList.toggle("mobile-inactive",i!==index));}
+    ["원본","스토리 편집","검토·확정"].forEach((name,i)=>tabs.append(button(name,()=>select(i))));select(1);return select;
+  }
+  function uploadForm(root,purpose,onSaved){
+    const form=node("form"),title=pf(form,"asset-title","기획 자료 제목","","text"),file=pf(form,"asset-file","PNG·JPEG·문서 / 최대 3MB","","text");
+    file.type="file";file.accept=purpose==="story_sketch"?".png,.jpg,.jpeg,.md,.txt,.pdf,.docx,.pptx":".md,.txt,.pdf,.docx,.pptx";
+    title.required=true;file.required=true;const submit=node("button","기획 자료 업로드","primary");submit.type="submit";form.append(submit);root.append(form);
+    form.onsubmit=guard(async()=>{const row=await api("/api/planning-assets",{...await fileBody(file),title:title.value,purpose});
+      await load();await onSaved?.(row);notice(row.duplicate?"동일 원본이 있어 기존 자료를 선택했습니다. 분석은 별도로 실행하세요.":"현재 프로젝트의 기획 자료로 저장했습니다.");});
+  }
+  async function sourcePanel(root){
+    root.replaceChildren(node("h2","기획 원본"),node("p","손그림과 기획 문서는 실제 고객 근거와 별도로 보관합니다."));
+    uploadForm(root,"story_sketch",async(row)=>{p.activeAsset=row.id;await sourcePanel(root);});
+    const select=pick(root,"planning-source","원본 선택",[["","선택하세요"],...p.assets.map(a=>[a.id,a.title+" · v"+a.version])],p.activeAsset||"");
+    const view=node("div");root.append(view);
+    select.onchange=guard(async()=>{p.activeAsset=select.value||null;await showSource(view,root);});await showSource(view,root);
+  }
+  async function showSource(view,root){
+    view.replaceChildren();const asset=p.assets.find(a=>a.id===p.activeAsset);if(!asset)return;
+    view.append(node("p",asset.filename+" · 원본 v"+asset.version+" · "+asset.sharing,"micro"));
+    const raw=await api("/api/planning-assets/raw/"+asset.id),run=p.runs[asset.id];
+    const scroll=node("div",null,"source-scroll"),regionList=node("div");view.append(scroll);
+    if(raw.media_type==="image"){
+      const canvas=node("canvas");canvas.setAttribute("aria-label","기획 원본과 분석 영역");scroll.append(canvas);
+      const img=new Image();img.src="data:"+raw.mime+";base64,"+raw.content_base64;
+      const generation=state.generation;canvasView={canvas,img,rotation:0,selected:null,regions:run?.regions||[]};
+      img.onload=()=>{if(generation===state.generation&&canvasView?.canvas===canvas)drawSource();};
+      const controls=node("div",null,"planning-toolbar");view.append(controls);
+      controls.append(button("원본 회전 90°",()=>{canvasView.rotation=(canvasView.rotation+1)%4;drawSource();}),button("확대/축소",()=>scroll.classList.toggle("zoomed")));
+      canvas.onclick=event=>{
+        const v=canvasView,box=canvas.getBoundingClientRect();let x=(event.clientX-box.left)*canvas.width/box.width,y=(event.clientY-box.top)*canvas.height/box.height;
+        const w=img.naturalWidth,h=img.naturalHeight;
+        if(v.rotation===1)[x,y]=[y,h-x];else if(v.rotation===2)[x,y]=[w-x,h-y];else if(v.rotation===3)[x,y]=[w-y,x];
+        const region=v.regions.find(r=>{const [rx,ry,rw,rh]=r.bbox;return x/w>=rx&&x/w<=rx+rw&&y/h>=ry&&y/h<=ry+rh;});
+        if(region)highlightRegion(asset.id,region.id);
+      };
+    }else scroll.append(node("pre",raw.text));
+    view.append(button("원본 분석 · AI초안작성",()=>prompt("원본 전사·영역 분석",async intent=>{
+      p.runs[asset.id]=await api("/api/planning-assets/extract",{asset_id:asset.id,expected_version:asset.version,prompt:intent});await sourcePanel(root);
+    })),button("원본 철회",async()=>{await api("/api/planning-assets/withdraw",{asset_id:asset.id,expected_version:asset.version});p.activeAsset=null;delete p.runs[asset.id];await load();renderStage();}));
+    if(run){
+      view.append(node("h3","전사·관계·확인 질문"),node("pre",run.transcript),regionList);
+      run.regions.forEach(r=>regionList.append(button(r.id+" · "+r.kind+" · "+r.text.slice(0,90),()=>highlightRegion(asset.id,r.id))));
+      run.relations.forEach(r=>view.append(node("p",r.from_region+" → "+r.to_region+": "+r.meaning+(r.uncertain?" · 확인 필요":""))));
+      [...run.quality_issues,...run.questions.map(q=>q.text)].forEach(t=>view.append(node("p","확인 필요: "+t)));
+    }
+  }
+  function drawSource(){
+    const v=canvasView;if(!v||!v.img.naturalWidth)return;const {canvas,img,rotation}=v,w=img.naturalWidth,h=img.naturalHeight;
+    canvas.width=rotation%2?h:w;canvas.height=rotation%2?w:h;const ctx=canvas.getContext("2d");ctx.save();
+    if(rotation===1){ctx.translate(h,0);ctx.rotate(Math.PI/2);}if(rotation===2){ctx.translate(w,h);ctx.rotate(Math.PI);}if(rotation===3){ctx.translate(0,w);ctx.rotate(-Math.PI/2);}
+    ctx.drawImage(img,0,0);for(const r of v.regions){const [x,y,rw,rh]=r.bbox;ctx.strokeStyle=r.id===v.selected?"#d26512":"#137157";ctx.lineWidth=Math.max(w,h)/250;ctx.strokeRect(x*w,y*h,rw*w,rh*h);}ctx.restore();
+  }
+  function highlightRegion(assetId,regionId){
+    if(canvasView){canvasView.selected=regionId;drawSource();}
+    for(const [key,input] of Object.entries(editorFields)){const ref=p.story?.provenance?.[key],match=ref?.asset_id===assetId&&ref?.region_id===regionId;input.classList.toggle("source-selected",!!match);if(match)input.focus();}
+  }
+  function storyEditor(root){
+    const toolbar=node("div",null,"planning-toolbar");root.append(toolbar);
+    toolbar.append(button("새 스토리 직접 작성",()=>{p.story=null;renderStage();}),button("스토리 맵",()=>renderStoryMap(root)));
+    const list=node("div",null,"planning-list");root.append(list);
+    for(const story of p.stories)list.append(button(story.redacted?"재검토 필요 · "+story.id.slice(0,12):story.title+" · v"+story.version+" · "+story.definition_status,()=>{if(story.redacted)throw new Error(story.text);p.story=story;renderStage();}));
+    const grid=node("div",null,"planning-grid"),source=node("div",null,"panel planning-source"),editor=node("div",null,"panel planning-editor"),review=node("div",null,"panel planning-review");
+    mobileTabs(root,[source,editor,review]);root.append(grid);grid.append(source,editor,review);guard(()=>sourcePanel(source))();
+    const row=p.story||{},form=node("form");editor.append(node("h2",row.id?"스토리 수정":"스토리 직접 작성"),form);editorFields={};
+    for(const key of Object.keys(labels).filter(k=>!["scenarios","acceptance_criteria","questions","assumptions"].includes(k))){
+      const input=pf(form,key,labels[key],row[key],['mvp','new_problem'].includes(key)?"checkbox":"textarea");editorFields[key]=input;
+      if(key==="actor"||key==="action")input.required=true;
+      const ref=row.provenance?.[key];if(ref){const origin={extracted:"원본 추출",ai_proposed:"AI 제안",po_edited:"PO 수정"}[ref.origin]||ref.origin;
+        form.append(button(origin+(ref.asset_id?" · 원본 영역 보기":""),async()=>{if(ref.asset_id){p.activeAsset=ref.asset_id;await sourcePanel(source);highlightRegion(ref.asset_id,ref.region_id);}notice("이전 값: "+String(ref.original_value??""));},"provenance"));}
+    }
+    const assumptions=pf(form,"assumptions","가정 · 한 줄에 하나",(row.assumptions||[]).join("\n"));
+    const scenarios=repeat(form,"시나리오",row.scenarios||[],[["type","흐름 종류","select",[["normal","정상"],["exception","예외"]]],["title","시나리오 이름","text"],["steps","진행 단계 · 한 줄에 하나","lines"],["branch","분기·예외 조건","textarea"]]);
+    const criteria=repeat(form,"수용 기준",row.acceptance_criteria||[],[["given","Given · 전제","textarea"],["when","When · 행동","textarea"],["then","Then · 관찰 가능한 결과","textarea"]]);
+    const questions=repeat(form,"확인 질문",row.questions||[],[["text","질문","textarea"],["critical","핵심 질문","checkbox"],["status","처리 상태","select",[["unanswered","미해소"],["answered","답변 완료"],["deferred","나중에 확인"],["excluded","범위 제외"]]],["answer","답변·제외 사유","textarea"]]);
+    const evidence=pick(form,"story-evidence","실제 근거·공유 인사이트 연결",state.evidence.map(e=>[e.id,(e.title||e.text).slice(0,70)+" · "+e.evidence_type]),row.evidence_ids||[],true);
+    const docs=p.results.filter(r=>!r.redacted&&r.state==="reviewed");
+    const research=pick(form,"story-research","검토한 리서치 결과 연결",docs.map(r=>[r.id,r.title]),(row.document_refs||[]).filter(r=>r.kind==="research_result").map(r=>r.id),true);
+    const submit=node("button","초안 저장","primary");submit.type="submit";form.append(submit);
+    form.onsubmit=guard(async()=>{
+      const fields=Object.fromEntries(Object.entries(editorFields).map(([k,v])=>[k,checked(v)]));
+      p.story=await api(row.id?"/api/stories/update":"/api/stories",{...fields,assumptions:lines(assumptions),scenarios:scenarios(),acceptance_criteria:criteria(),questions:questions(),
+        evidence_ids:values(evidence),document_refs:[...(row.document_refs||[]).filter(r=>r.kind!=="research_result"),...docs.filter(r=>values(research).includes(r.id)).map(r=>({kind:r.kind,id:r.id,version:r.version}))],
+        source_refs:row.source_refs||[],persona_refs:row.persona_refs||[],...(row.id?{story_id:row.id,expected_version:row.version}:{})});await load();renderStage();notice("설계 초안을 저장했습니다. 고객 검증 상태와는 별개입니다.");
+    });
+    review.append(node("h2","검토·확정"),node("p",row.id?row.id+"\nv"+row.version+" · 설계: "+row.definition_status+"\n고객 검증: "+row.customer_validation:"사용자·행동을 입력하면 초안을 저장할 수 있습니다.","planning-status"));
+    review.append(button("AI초안작성 · 새 후보/재분석",()=>prompt("사용자 스토리 AI초안작성",async intent=>{
+      await api("/api/story-drafts",{prompt:intent,extraction_ids:Object.values(p.runs).filter(r=>r.status==="completed").slice(-3).map(r=>r.id),
+        ...(row.id?{base_story_id:row.id}:{}),evidence_ids:row.evidence_ids||[],source_refs:row.source_refs||[],persona_refs:row.persona_refs||[],document_refs:row.document_refs||[]});await load();renderStage();
+    })));
+    if(row.id){
+      const reason=pf(review,"review-reason","검토 메모 · 보류/제외 시 필수");
+      for(const [stateName,label] of [["in_review","검토 중"],["held","보류"],["excluded","범위 제외"],["confirmed","이 버전 설계안 확정"]])review.append(button(label,async()=>{
+        p.story=await api("/api/stories/review",{story_id:row.id,expected_version:row.version,state:stateName,reason:reason.value});await load();renderStage();}));
+      const validation=pick(review,"customer-validation","고객 검증 상태",[["unverified","미검증"],["planned","검증 예정"],["actual_results","실제 결과 있음"]],row.customer_validation);
+      const actualReports=pick(review,"validation-reports","실제 조사로 확인한 FGI 검토본",p.results.filter(r=>!r.redacted&&r.actual_customer_data&&r.state==="reviewed").map(r=>[r.id,r.title]),row.validation_result_ids||[],true);
+      const validationNote=pf(review,"validation-note","고객 검증 메모");
+      review.append(button("고객 검증 상태 저장",async()=>{p.story=await api("/api/stories/validation",{story_id:row.id,expected_version:row.version,state:validation.value,note:validationNote.value,evidence_ids:values(evidence),result_ids:values(actualReports)});await load();renderStage();}));
+      if(row.definition_status==="confirmed")exportButtons(review,"/api/stories/export",{stories:[{id:row.id,version:row.version}]},row.id+"-v"+row.version);
+      review.append(button("이전 버전 확인",async()=>{
+        const history=await api("/api/stories/versions/"+row.id),container=node("div");
+        for(const version of history){const card=node("details");card.append(node("summary","v"+version.version+(version.redacted?" · 재확인 필요":" · "+version.definition_status)));
+          card.append(node("p",version.redacted?version.text:[version.actor,version.action,version.value].join(" / ")));if(!version.redacted&&version.definition_status==="confirmed")exportButtons(card,"/api/stories/export",{stories:[{id:row.id,version:version.version}]},row.id+"-v"+version.version);container.append(card);}review.append(container);
+      }));
+      review.append(button("이 스토리 분할",()=>{
+        const box=node("div",null,"planning-entry"),a=pf(box,"split-a","첫 번째 스토리 행동"),b=pf(box,"split-b","두 번째 스토리 행동");
+        box.append(button("별도 ID로 분할 저장",async()=>{await api("/api/stories/restructure",{sources:[{id:row.id,version:row.version}],stories:[{action:a.value,title:a.value},{action:b.value,title:b.value}]});await load();renderStage();}));review.append(box);
+      }));
+      const merge=pick(review,"merge-story","병합할 다른 스토리",[["","선택하세요"],...p.stories.filter(s=>s.id!==row.id&&!s.redacted).map(s=>[s.id,s.title])]);
+      review.append(button("새 ID로 병합 초안 작성",async()=>{const other=p.stories.find(s=>s.id===merge.value);if(!other)throw new Error("병합할 스토리를 선택하세요.");await api("/api/stories/restructure",{sources:[{id:row.id,version:row.version},{id:other.id,version:other.version}],stories:[{title:row.title+" / "+other.title,action:row.action+"; "+other.action}]});await load();renderStage();}));
+    }
+    renderCandidates(review,row);
+  }
+  function renderCandidates(root,row){
+    const candidates=p.drafts.filter(d=>row.id?d.base_story?.id===row.id:!d.base_story).slice(-8);
+    for(const draft of candidates)draft.stories.forEach((candidate,index)=>{
+      const box=node("details",null,"planning-entry");box.append(node("summary","AI 후보 · "+candidate.title),node("p",draft.prompt));const fields=[];
+      for(const [key,label] of Object.entries(labels)){
+        const changed=!row.id||JSON.stringify(row[key])!==JSON.stringify(candidate[key]);if(!changed)continue;
+        const choice=pf(box,"adopt-"+key,label,false,"checkbox");fields.push([key,choice]);
+        const display=v=>Array.isArray(v)?v.map(x=>typeof x==="object"?Object.values(x).join(" · "):x).join("\n"):String(v??"");
+        if(row.id)box.append(node("pre","현재: "+display(row[key])));box.append(node("pre","후보: "+display(candidate[key])));
+      }
+      box.append(button(row.id?"선택한 필드만 채택":"새 스토리 초안으로 채택",async()=>{
+        p.story=await api("/api/story-drafts/apply",{draft_id:draft.id,candidate_index:index,...(row.id?{story_id:row.id,expected_version:row.version,fields:fields.filter(([,e])=>e.checked).map(([k])=>k)}:{})});await load();renderStage();
+      }));root.append(box);
+    });
+  }
+  function renderStoryMap(root){
+    const panel=node("div",null,"panel story-map"),stories=p.stories.filter(s=>!s.redacted),journeys=[...new Set(stories.map(s=>s.journey||"미분류"))],releases=[...new Set(stories.map(s=>s.release||"미정"))];
+    panel.append(node("h2","스토리 맵 · 여정 × 릴리스"));const table=node("table"),head=node("tr");head.append(node("th","릴리스"));journeys.forEach(j=>head.append(node("th",j)));table.append(head);
+    for(const release of releases){const tr=node("tr");tr.append(node("th",release));for(const journey of journeys){const td=node("td");stories.filter(s=>(s.release||"미정")===release&&(s.journey||"미분류")===journey).forEach(s=>td.append(button(s.title+(s.mvp?" · MVP":""),()=>{p.story=s;renderStage();})));tr.append(td);}table.append(tr);}panel.append(table);root.prepend(panel);
+  }
+  function documentEditor(root){
+    const rows=p.documents.filter(d=>!d.redacted&&d.stage===p.stage),toolbar=node("div",null,"planning-toolbar");root.append(toolbar);
+    toolbar.append(button("새 문서 직접 작성",()=>{p.document=null;renderStage();}),button("AI초안작성",()=>prompt(stages[p.stage]+" · AI초안작성",async intent=>{
+      p.document=await api("/api/definitions/generate",{stage:p.stage,prompt:intent});await load();renderStage();
+    })));
+    const list=node("div",null,"planning-list");rows.forEach(d=>list.append(button(d.title+" · v"+d.version+" · "+d.state,()=>{p.document=d;renderStage();})));root.append(list);
+    const row=p.document?.stage===p.stage?p.document:{},form=node("form",null,"panel");root.append(form);
+    const title=pf(form,"document-title","문서 제목",row.title||stages[p.stage],"text");title.required=true;
+    const sections=repeat(form,"문단",row.sections||[{id:"overview",title:stages[p.stage],text:"",evidence_ids:[]}],[["id","문단 식별자","text"],["title","문단 제목","text"],["text","본문","textarea"]]);
+    const assumptions=pf(form,"document-assumptions","가정 · 한 줄에 하나",(row.assumptions||[]).join("\n"));
+    const questions=repeat(form,"문서 확인 질문",row.questions||[],[["text","질문","textarea"],["status","상태","select",[["unanswered","미해소"],["answered","답변 완료"],["excluded","범위 제외"]]],["answer","답변·제외 사유","textarea"]]);
+    const stories=p.stories.filter(s=>!s.redacted&&s.definition_status==="confirmed"),storySelect=pick(form,"document-stories","연결할 확정 스토리",stories.map(s=>[s.id,s.title+" · v"+s.version]),(row.story_refs||[]).map(s=>s.id),true);
+    const save=node("button","문서 초안 저장","primary");save.type="submit";form.append(save);
+    form.onsubmit=guard(async()=>{p.document=await api(row.id?"/api/definitions/update":"/api/definitions",{stage:p.stage,title:title.value,sections:sections().map(s=>({...s,evidence_ids:s.evidence_ids||[]})),assumptions:lines(assumptions),questions:questions(),story_refs:stories.filter(s=>values(storySelect).includes(s.id)).map(s=>({id:s.id,version:s.version})),...(row.id?{document_id:row.id,expected_version:row.version}:{})});await load();renderStage();notice("문서 초안을 저장했습니다.");});
+    if(row.id){const controls=node("div",null,"panel");root.append(controls,node("p",row.id+" · v"+row.version+" · "+row.state));
+      controls.append(button("이 버전을 기준 문서로 확정",async()=>{p.document=await api("/api/definitions/confirm",{document_id:row.id,expected_version:row.version});await load();renderStage();notice("검토한 문서를 후속 기획의 기준으로 선택했습니다.");}));
+      if(row.state==="confirmed")exportButtons(controls,"/api/definitions/export",{document_id:row.id,expected_version:row.version},row.id+"-v"+row.version);
+    }
+    const inputs=node("details",null,"panel");inputs.append(node("summary","후속 기획에 사용되는 검토 리서치"));p.results.filter(r=>!r.redacted&&r.state==="reviewed").forEach(r=>inputs.append(node("p",r.title+" · "+r.category+" · v"+r.version)));root.append(inputs);
+  }
+  function renderStage(){
+    const root=$("definition-workspace"),tabs=$("definition-tabs");root.replaceChildren();tabs.replaceChildren();
+    for(const [key,title] of Object.entries(stages)){const tab=button(title,()=>{p.stage=key;p.document=null;renderStage();});tab.classList.toggle("active",key===p.stage);tabs.append(tab);}
+    if(p.stage==="stories")storyEditor(root);else documentEditor(root);
+  }
+  function resultCards(root,category){
+    for(const row of p.results.filter(r=>!r.redacted&&r.category===category)){
+      const card=node("details",null,"planning-entry");card.append(node("summary",row.title+" · v"+row.version+" · "+row.state));
+      const text=pf(card,"research-review-text","분석 내용·조건·한계",row.text);
+      const actual=row.category==="fgi_actual"?pf(card,"actual-report","실제 고객 조사 보고서임을 확인했습니다 · 가상 FGI 제외",row.actual_customer_data,"checkbox"):null;
+      card.append(button("검토본 저장 · PRD 작성에 연결",async()=>{await api("/api/research-results/review",{result_id:row.id,expected_version:row.version,text:text.value,...(actual?{actual_customer_data:actual.checked}:{})});await load();await window.planningPage(category==="existing_service"?"baseline":category==="fgi_actual"?"studies":category==="voc"?"voc":"chat");notice("검토한 리서치 결과를 후속 기획에서 사용할 수 있습니다.");}),
+        button("분석 Markdown 내보내기",()=>download(row.id+".md",row.text)));root.append(card);
+    }
+  }
+  async function baseline(){
+    const root=$("baseline-workspace");root.replaceChildren(node("h2","기존 서비스 PRD·매뉴얼"));
+    uploadForm(root,"existing_service",baseline);
+    const assets=p.assets.filter(a=>a.purpose==="existing_service"&&a.media_type==="document"),selected=pick(root,"baseline-assets","함께 분석할 문서",assets.map(a=>[a.id,a.title+" · v"+a.version]),[],true);
+    root.append(button("AI초안작성 · 전체 서비스 분석",()=>prompt("기존 서비스 종합 분석",async intent=>{
+      await api("/api/service-analysis",{prompt:intent,asset_refs:assets.filter(a=>values(selected).includes(a.id)).map(a=>({id:a.id,version:a.version}))});await load();await baseline();
+    })));resultCards(root,"existing_service");
+  }
+  function saveAnalysisForm(root,category){
+    root.append(node("h2",category==="fgi_actual"?"실제 FGI 결과 등록":"분석 결과를 기획 지식으로 저장"));
+    if(category==="fgi_actual")uploadForm(root,"actual_fgi",async()=>window.planningPage("studies"));
+    const form=node("form"),title=pf(form,"result-title","분석 제목","","text"),text=pf(form,"result-text","분석 내용·조건·한계");title.required=true;text.required=true;
+    let assetSelect,messageSelect,conv=state.conversation;
+    if(category==="fgi_actual")assetSelect=pick(form,"fgi-source","실제 FGI 결과 문서",[["","선택하세요"],...p.assets.filter(a=>a.purpose==="actual_fgi").map(a=>[a.id,a.title+" · v"+a.version])]);
+    else {
+      root.append(button("분석 대화 열기",()=>page("chat")));
+      messageSelect=pick(form,"analysis-messages","현재 대화에서 연결할 근거 있는 답변",(conv?.messages||[]).filter(m=>!m.redacted&&m.evidence_ids?.length).map(m=>[m.id,m.text.slice(0,100)]),[],true);
+      if(!conv)form.append(node("p","먼저 분석 대화를 열고 질문한 후 이 화면으로 돌아오세요."));
+    }
+    const save=node("button","검토 전 결과 저장","primary");save.type="submit";form.append(save);root.append(form);
+    form.onsubmit=guard(async()=>{
+      const asset=p.assets.find(a=>a.id===assetSelect?.value);
+      await api("/api/research-results",{category,title:title.value,text:text.value,...(asset?{asset_id:asset.id,asset_version:asset.version}:{conversation_id:conv?.id,message_ids:messageSelect?values(messageSelect):[]})});
+      await load();await window.planningPage(category==="fgi_actual"?"studies":category==="voc"?"voc":"chat");notice("분석 초안을 저장했습니다. 내용을 검토한 후 후속 기획에 연결하세요.");
+    });
+    resultCards(root,category);
+  }
+  async function catalog(){
+    const root=$("persona-catalog-workspace");root.replaceChildren(node("h2","가상 페르소나 설계 카탈로그"),node("p","32개 설계 프로필에서 검색·선택해 근거를 연결하세요. 실제 고객이나 AI가 생성한 관찰 결과가 아닙니다."));
+    const search=pf(root,"catalog-query","역할·목표·제약 키워드","","text"),list=node("div");root.append(list);
+    async function results(){const data=await api("/api/persona-catalog?q="+encodeURIComponent(search.value));list.replaceChildren();
+      const selected=pick(list,"catalog-profiles","등록할 설계 프로필",data.catalog.filter(c=>!c.registered_id).map(c=>[c.catalog_key,c.name+" · "+c.segment+" · "+c.goals]),[],true);
+      const evidence=pick(list,"catalog-evidence","프로필에 연결할 현재 근거",state.evidence.map(e=>[e.id,(e.title||e.text).slice(0,70)]),[],true);
+      list.append(node("p",`정의된 프로필 ${data.defined_count}개 · 활성 풀 상한 ${data.active_limit}명`),button("선택 프로필 등록",async()=>{
+        await api("/api/persona-catalog/register",{catalog_keys:values(selected),evidence_ids:values(evidence)});await refresh();await results();notice("가상 설계 프로필을 등록했습니다. 가정과 실제 근거를 검토하세요.");
+      }));
+    }
+    root.insertBefore(button("카탈로그 검색",results),list);await results();
+  }
+  function publicResearch(){
+    const host=$("public-research-workspace"),root=node("details");root.append(node("summary","공개 웹 선진사례 조사 · 분석 지식 저장"));host.replaceChildren(root);
+    const form=node("form"),query=pf(form,"web-query","공개 자료 검색어","","text"),out=node("div");query.required=true;
+    const submit=node("button","공개 웹 검색","secondary");submit.type="submit";form.append(submit);root.append(form,out);
+    form.onsubmit=guard(async()=>{const result=await api("/api/public-research",{query:query.value});out.replaceChildren(node("p",result.disclosure));
+      const selected=pick(out,"web-candidates","비교 분석할 검색 후보",result.results.map(r=>[r.id,r.title]),[],true);
+      out.append(button("AI초안작성 · 공개 사례 비교",()=>prompt("공개 웹 사례 비교 분석",async intent=>{await api("/api/public-research/analyze",{search_id:result.search_id,expected_version:result.version,candidate_ids:values(selected),prompt:intent});await load();publicResearch();})));
+      result.results.forEach(r=>{const card=node("div",null,"planning-entry"),a=node("a",r.title);a.href=r.url;a.target="_blank";a.rel="noopener noreferrer";card.append(a,node("p",r.text));out.append(card);});
+    });
+    const analysis=node("details");analysis.append(node("summary","선진사례 채팅 분석을 후속 기획에 연결"));root.append(analysis);saveAnalysisForm(analysis,"benchmark");
+  }
+  window.planningPage=async name=>{
+    const stage=["definition","prototype","uat"].includes(name)?name:"research";
+    document.querySelectorAll("[data-stage]").forEach(b=>b.classList.toggle("active",b.dataset.stage===stage));
+    if(["baseline","definition","voc","studies","personas","chat"].includes(name))await load();
+    if(name==="definition")renderStage();if(name==="baseline")await baseline();if(name==="personas")await catalog();if(name==="chat")publicResearch();
+    if(name==="voc"){const root=$("voc-result-workspace");root.replaceChildren();saveAnalysisForm(root,"voc");}
+    if(name==="studies"){const root=$("actual-fgi-workspace");root.replaceChildren();root.append(button("페르소나 검색·풀 관리",()=>page("personas")));saveAnalysisForm(root,"fgi_actual");}
+  };
+  window.planningReset=()=>{
+    closePrompt();canvasView=null;editorFields={};p={stage:"product",assets:[],stories:[],documents:[],results:[],drafts:[],runs:{},story:null,document:null,activeAsset:null};
+    for(const id of ["baseline-workspace","definition-workspace","public-research-workspace","voc-result-workspace","actual-fgi-workspace","persona-catalog-workspace"])$(id).replaceChildren();
+  };
+  for(const name of ["research","personas","prd"]){const b=document.querySelector(`[data-page="${name}"]`);if(b)$("planning-tools").append(b);}
+  document.querySelectorAll("[data-stage]").forEach(b=>b.onclick=guard(()=>page(b.dataset.stage==="research"?"baseline":b.dataset.stage)));
+})();

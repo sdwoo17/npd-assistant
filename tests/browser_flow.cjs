@@ -21,7 +21,7 @@ before(async () => {
     });
     server.once("error", reject);
   });
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true, ...(process.env.NPD_TEST_BROWSER_CHANNEL ? {channel:process.env.NPD_TEST_BROWSER_CHANNEL} : {}) });
 });
 after(async () => {
   if (browser) await browser.close();
@@ -59,7 +59,7 @@ async function ask(page, text) {
   );
 }
 async function nav(page, name) {
-  await page.locator('nav [data-page="' + name + '"]').click();
+  await page.locator('.sidebar [data-page="' + name + '"]').click();
   await page.locator("#page-" + name).waitFor({ state: "visible" });
 }
 
@@ -316,7 +316,9 @@ test("browser: FGI guide review, completed study export and private citation inp
     const field = key => page.locator('#study-detail [data-field="'+key+'"]');
     await field("study_objective").fill("소재 리포트 분석");
     await field("study_questions").fill("판단 근거는 무엇인가요?");
+    const designSaved=page.waitForResponse(r=>r.url().endsWith("/api/studies/update")&&r.request().method()==="POST");
     await page.getByRole("button", {name:"설계 저장 · 리크루팅으로", exact:true}).click();
+    const designResponse=await designSaved;assert.equal(designResponse.status(),201,await designResponse.text());
     await page.getByRole("button", {name:"리크루팅 저장 · 가이드로", exact:true}).waitFor();
     await field("study_criteria").fill("리포트 담당 광고주 · 가상 모집");
     const first = await field("study_personas").locator("option").first().getAttribute("value");
@@ -357,4 +359,69 @@ test("browser: FGI guide review, completed study export and private citation inp
     assert.equal(await page.locator("#study-detail").textContent(),"");
     assert.deepEqual(errors,[]);
   } finally { await ctx.close(); }
+});
+
+test("browser: manual story confirmation preserves exact exported version and draft edits", async()=>{
+  const {ctx,page,errors}=await login("po");
+  try {
+    await page.click('[data-stage="definition"]');
+    await page.getByRole("button",{name:"2.2 사용자스토리정의",exact:true}).click();
+    await page.locator('[name="actor"]').fill("UI 합성 광고주");
+    await page.locator('[name="action"]').fill("기간 조건을 확인한다");
+    await page.locator('[name="value"]').fill("비교 오류를 피한다");
+    await page.locator('[name="problem"]').fill("기간 조건이 명확하지 않음");
+    await page.locator('[name="new_problem"]').check();
+    await page.locator('[name="validation_task"]').fill("실제 광고주에게 검증");
+    await page.getByRole("button",{name:"수용 기준 추가",exact:true}).click();
+    await page.locator('[name="given"]').fill("지표 화면을 열었을 때");
+    await page.locator('[name="when"]').fill("기간을 변경하면");
+    await page.locator('[name="then"]').fill("선택한 기간을 표시한다");
+    await page.getByRole("button",{name:"초안 저장",exact:true}).click();
+    await page.getByRole("button",{name:"이 버전 설계안 확정",exact:true}).click();
+    await page.getByRole("button",{name:"구조화 설계안 내보내기",exact:true}).waitFor();
+    const [download]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:"구조화 설계안 내보내기",exact:true}).click()]);
+    const fs=require("node:fs/promises"),payload=JSON.parse(await fs.readFile(await download.path(),"utf8"));
+    assert.equal(payload.schema_version,"npd.story-package.v1");
+    assert.equal(payload.stories[0].customer_validation,"unverified");assert.equal(payload.stories[0].acceptance_criteria[0].then,"선택한 기간을 표시한다");
+    await page.locator('[name="value"]').fill("PO가 수정한 가치");
+    await page.getByRole("button",{name:"초안 저장",exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('.planning-status')?.textContent.includes('설계: draft'));
+    await page.screenshot({path:"test-results/stage2-manual-desktop.png",fullPage:true});
+    assert.deepEqual(errors,[]);
+  } finally {await ctx.close();}
+});
+
+test("browser: each AI draft asks for PO intent and creates an independent document", async()=>{
+  const {ctx,page,errors}=await login("po");
+  try {
+    await page.click('[data-stage="definition"]');
+    for(const intent of ["UI 광고주 관점 A","UI 운영자 관점 B"]){
+      await page.getByRole("button",{name:"AI초안작성",exact:true}).click();
+      await page.locator("#draft-prompt-dialog").waitFor({state:"visible"});
+      await page.fill("#draft-prompt",intent);
+      await page.locator('#draft-prompt-form button[type="submit"]').click();
+      await page.locator("#draft-prompt-dialog").waitFor({state:"hidden"});
+      assert.equal(await page.locator('[name="document-title"]').inputValue(),intent);
+    }
+    assert.ok(await page.getByRole("button",{name:/UI 광고주 관점 A · v1 · draft/}).count());
+    assert.ok(await page.getByRole("button",{name:/UI 운영자 관점 B · v1 · draft/}).count());
+    assert.deepEqual(errors,[]);
+  } finally {await ctx.close();}
+});
+
+test("browser: mobile planning separates source editing and review without horizontal overflow", async()=>{
+  const {ctx,page,errors}=await login("po",{width:390,height:844});
+  try {
+    await page.click('[data-stage="definition"]');
+    await page.getByRole("button",{name:"2.2 사용자스토리정의",exact:true}).click();
+    await page.locator('[name="actor"]').waitFor({state:"visible"});
+    await page.getByRole("button",{name:"원본",exact:true}).click();
+    await page.locator('[name="asset-file"]').waitFor({state:"visible"});
+    await page.getByRole("button",{name:"검토·확정",exact:true}).click();
+    await page.getByRole("button",{name:"AI초안작성 · 새 후보/재분석",exact:true}).waitFor({state:"visible"});
+    const size=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));
+    assert.ok(size.scroll<=size.width+1,JSON.stringify(size));
+    await page.screenshot({path:"test-results/stage2-mobile.png",fullPage:true});
+    assert.deepEqual(errors,[]);
+  } finally {await ctx.close();}
 });

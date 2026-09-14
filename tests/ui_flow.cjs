@@ -18,6 +18,7 @@ before(async () => {
     server.stdout.once("data", data => {clearTimeout(timeout); resolve(data.toString().trim());});
   });
   [html,script] = await Promise.all(["/","/app.js"].map(path => fetch(origin+path).then(r=>r.text())));
+  script += "\n" + await fetch(origin+"/planning.js").then(r=>r.text());
 });
 
 after(async () => {

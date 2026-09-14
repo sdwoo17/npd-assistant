@@ -109,7 +109,7 @@ def citation_ids(content):
     Ordinary bracketed prose is not a citation. Recognized IDs must be resolved
     by the caller; matching the grammar never grants access to a source.
     """
-    prefixes = r"(?:INS|VOC|PROB|OPP|PDEF|REQ|NFR|SCOPE|HYP|MET|BEN|AST|TASK|UTASK|IMP|PER|FGI|DEB)"
+    prefixes = r"(?:INS|VOC|PROB|OPP|PDEF|REQ|NFR|SCOPE|HYP|MET|BEN|AST|TASK|UTASK|IMP|PER|FGI|DEB|STORY|DOC|RSC)"
     return [value for value in re.findall(r"\[([^\]\n]+)\]", content)
             if re.fullmatch(r"[0-9a-f-]{36}", value, re.IGNORECASE)
             or re.fullmatch(prefixes + r"-[\w.-]+", value, re.IGNORECASE)]

@@ -117,6 +117,7 @@ function lines(value) {
     .filter(Boolean);
 }
 function resetWorkspace() {
+  window.planningReset?.();
   state.studyId = null;
   state.conversation = null;
   state.evidence = [];
@@ -217,13 +218,18 @@ async function refresh() {
 }
 async function page(name) {
   if (name === "research" && state.user.role !== "owner") return;
+  const navigation = state.pageGeneration = (state.pageGeneration || 0) + 1;
   document
     .querySelectorAll("section[id^='page-']")
-    .forEach((e) => (e.hidden = e.id !== "page-" + name));
+    .forEach((e) => (e.hidden = true));
   document
-    .querySelectorAll("nav button")
+    .querySelectorAll("nav button[data-page]")
     .forEach((b) => b.classList.toggle("active", b.dataset.page === name));
   const labels = {
+    baseline: ["기존서비스분석", "PRD·매뉴얼을 함께 분석하고 검토한 결과를 후속 기획에 연결하세요."],
+    definition: ["PRD작성", "의도를 직접 작성하거나 AI 후보를 비교하고, 설계안과 고객 검증 상태를 별도로 관리하세요."],
+    prototype: ["프로토타입개발", "확정 PRD와 스토리를 개발 작업으로 전달하세요."],
+    uat: ["UAT/피드백", "수용 기준을 바탕으로 사용자 검증을 준비하세요."],
     chat: [
       "리서치 채팅",
       "근거를 탐색하고, 가상 광고주를 인터뷰하며 기획 결정을 남기세요.",
@@ -248,11 +254,13 @@ async function page(name) {
   };
   $("page-title").textContent = labels[name][0];
   $("page-caption").textContent = labels[name][1];
+  await window.planningPage?.(name);
   if (name === "research") await renderResearch();
   if (name === "voc") await loadVoc();
   if (name === "prd") await renderPlanning();
   if (name === "studies") await renderStudies();
   if (name === "personas") await refresh();
+  if (state.pageGeneration === navigation) $("page-" + name).hidden = false;
 }
 async function showEvidence(id) {
   state.evidence = await api("/api/evidence");
@@ -1150,7 +1158,7 @@ $("member-form").onsubmit = guard(async () => {
   notice("등록된 계정에 이 프로젝트 접근 권한을 추가했습니다.");
 });
 document
-  .querySelectorAll("nav button")
+  .querySelectorAll("nav button[data-page]")
   .forEach((b) => (b.onclick = guard(() => page(b.dataset.page))));
 $("new-conversation").onclick = () => {
   $("new-conversation-form").hidden = !$("new-conversation-form").hidden;
@@ -1449,6 +1457,7 @@ async function renderStudies() {
     const form = node("form", null, "panel");
     const title = field(form, "study_title", "스터디 제목", row.title);
     const objective = field(form, "study_objective", "연구 목적", row.objective, "textarea");
+    const moderation = field(form, "study_moderation", "PO 진행 가이드 · 확인할 순서와 금지 조건", row.moderation_brief || "", "textarea");
     const questions = field(form, "study_questions", "연구 질문 · 줄마다 하나", row.research_questions, "textarea");
     const criteria = field(form, "study_criteria", "리크루팅 기준", row.recruitment_criteria, "textarea");
     const people = field(form, "study_personas", "참여자 선택 · 최대 6명", "", "select");
@@ -1466,7 +1475,7 @@ async function renderStudies() {
     saveButton(form, row.stage === "design" ? "설계 저장 · 리크루팅으로" : row.stage === "recruitment" ? "리크루팅 저장 · 가이드로" : "설계 변경 저장 · 가이드 재검토");
     form.onsubmit = guard(async () => {
       await api("/api/studies/update", { study_id: row.id, expected_version: row.version, stage: next,
-        title: title.value, objective: objective.value, research_questions: lines(questions.value),
+        title: title.value, objective: objective.value, moderation_brief: moderation.value, research_questions: lines(questions.value),
         recruitment_criteria: criteria.value, persona_ids: [...people.selectedOptions].map(o => o.value), target_prd_id: prd.value });
       await renderStudies();
     });

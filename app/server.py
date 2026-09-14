@@ -57,7 +57,7 @@ class Handler(BaseHTTPRequestHandler):
                 # project/model information and never authenticates or writes.
                 return self.send(200, {"status": "ok"})
             self.check_host()
-            static = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"), "/styles.css": ("styles.css", "text/css")}
+            static = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"), "/planning.js": ("planning.js", "text/javascript"), "/styles.css": ("styles.css", "text/css")}
             if route in static:
                 path, mime = static[route]
                 return self.send(200, (ROOT / "static" / path).read_bytes(), mime + "; charset=utf-8")

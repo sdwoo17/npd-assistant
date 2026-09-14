@@ -50,8 +50,14 @@ class Research:
         job = self.new_job(user, "research_upload", body, job_id)
         try:
             filename, content, digest = decode_file(body)
+            old = self.store.get(p, "source", body["source_id"]) if body.get("source_id") else None
+            policy = body.get("policy", old.get("policy", "domain_proprietary") if old else "domain_proprietary")
+            if old and old.get("policy") == "amazon_internal" and policy != "amazon_internal":
+                raise AppError("비공개 내부 자료의 보호 정책을 업로드 갱신으로 해제할 수 없습니다.", 403)
+            if policy not in ("domain_public", "domain_proprietary", "amazon_internal"):
+                raise AppError("리서치 자료 정책을 확인하세요.")
             fields = {"filename": filename, "title": text(body, "title", 200), "encrypted_text": self.store.encrypt(content),
-                "encrypted_file": self.store.encrypt(body["content_base64"]), "hash": digest, "owner_id": user["id"], "status": "extracted"}
+                "encrypted_file": self.store.encrypt(body["content_base64"]), "hash": digest, "owner_id": user["id"], "status": "extracted", "policy": policy}
             if body.get("source_id"):
                 old = self.store.get(p, "source", body["source_id"])
                 fields["content_version"] = old.get("content_version", 1) + 1
@@ -112,6 +118,8 @@ class Research:
             r = self.store.get(p, "insight", rid)
             if body["published"]:
                 s = self.store.get(p, "source", r["source_id"])
+                if s.get("policy") == "amazon_internal":
+                    raise AppError("아마존 비공개 내부 자료는 공개 근거로 전환할 수 없습니다.", 403)
                 if r.get("source_version", 1) != s.get("content_version", 1):
                     raise AppError("원문 버전이 변경됐습니다. 인사이트를 갱신하세요.", 409)
             expected = versions.get(rid, body.get("expected_version", r["version"]))
