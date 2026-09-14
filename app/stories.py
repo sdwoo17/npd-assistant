@@ -151,7 +151,7 @@ class Stories:
             raise AppError('참고 PRD의 근거를 다시 확인하세요.', 409)
         deps = dependency_map([asset] + ([context] if context else []) + ([baseline] if baseline else []))
         run = self.store.put(p, 'story_extraction', {'asset_id': asset['id'], 'asset_version': asset['version'],
-            'request_id': eid, 'notes': notes, 'status': 'running', 'dependencies': deps, 'created_by': user['id'],
+            'request_id': eid, 'notes': notes, 'context_ref': ref(context) if context else None, 'status': 'running', 'dependencies': deps, 'created_by': user['id'],
             'model': self.model.model, 'provider': getattr(self.model, 'provider', 'test'), 'prompt_version': 'story-extract-v1', 'baseline_refs': [ref(baseline)] if baseline else []})
         payload = {'planning_context': context, 'baseline_prd': baseline, 'input_kind': asset['input_type'], 'notes': notes}
         try:

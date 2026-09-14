@@ -79,6 +79,11 @@ class Service(Research, Voc, Planning, Chat, Assets, Stories):
         return insights + voc
 
     def accessible(self, project, record):
+        if record.get("kind") in ("user_story", "story_extraction"):
+            context = self.stage_context(project)
+            current = {k: context[k] for k in ("kind", "id", "version")} if context else None
+            if record.get("context_ref") != current:
+                return False
         for baseline in record.get("baseline_refs", []):
             try:
                 prd = self.store.get(project, "prd", baseline["id"])

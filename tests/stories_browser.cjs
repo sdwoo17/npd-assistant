@@ -84,6 +84,16 @@ test('browser: image → candidate → source comparison → PO approval → req
     assert.equal(state.stories[0].goal, 'PO가 직접 정한 비교 목표');
     assert.equal(state.stories[0].version, confirmed.version);
     assert.ok(saved.version < confirmed.version);
+    // Adding the first product definition also requires review; valid originals
+    // remain available while interpretation tied to the old context is hidden.
+    await page.click('[data-stage-menu="context"]');
+    await page.fill('#stage-context-form [data-field="customer"]', '대행사 운영자');
+    await post('/api/stage2/context', () => page.getByRole('button', {name: '상품 기준 저장', exact: true}).click());
+    await page.click('[data-stage-menu="stories"]'); await page.click('[data-story-tab="edit"]');
+    await post('/api/stories', () => page.getByRole('button', {name: '현재 기준으로 검토용 초안 열기'}).click());
+    await page.locator('#story-editor-form').waitFor();
+    await page.locator('.story-source img').waitFor();
+    assert.equal(await page.locator('#story-editor-form [data-field="goal"]').inputValue(), 'PO가 직접 정한 비교 목표');
     // No cross-project planning content remains in DOM after switch.
     await page.evaluate(async () => {
       const boot = await (await fetch('/api/bootstrap')).json();

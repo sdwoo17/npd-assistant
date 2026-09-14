@@ -180,9 +180,11 @@ class StoriesTest(unittest.TestCase):
         self.assertTrue(repeat['redacted'])
 
     def test_product_context_only_change_can_be_explicitly_reviewed(self):
-        context = self.post('/api/stage2/context', {'customer': '광고주'})
-        story, _, _ = self.ready()
+        story, _, run = self.ready()
         confirmed = self.confirm(story)
+        context = self.post('/api/stage2/context', {'customer': '광고주'})
+        self.assertFalse(self.s.accessible('project-a', confirmed))
+        self.assertFalse(self.s.accessible('project-a', run))
         self.post('/api/stage2/context', {'expected_version': context['version'], 'customer': '대행사'})
         reviewed = self.post('/api/stories', {'story_id': story['id'], 'expected_version': confirmed['version']})
         self.assertEqual(reviewed['definition_status'], 'draft')

@@ -1615,7 +1615,8 @@ async function renderStoryEditor(parent) {
   const layout = node('div', null, 'story-editor-layout'); parent.append(layout);
   const original = node('aside', null, 'card story-source'); original.append(node('h2', '원본 대조'));
   const sourcePane = node('div'); original.append(sourcePane); layout.append(original);
-  const runs = (story.source_refs || []).map(r => stage.data.extractions.find(e => e.id === r.extraction_id && !e.redacted)).filter(Boolean);
+  const runs = (story.source_refs || []).map(r => stage.data.extractions.find(e => e.id === r.extraction_id && !e.redacted) ||
+    {id: r.extraction_id, asset_id: r.asset_id, created_at: '기준 변경 후 원본 재검토', regions: [], transcript: '이전 해석은 기준 변경으로 숨겼습니다. 기획 원본을 직접 대조하고 내용을 수정하세요.'});
   let sourceNonce = 0;
   const showSource = async (run, ids = []) => {
     const nonce = ++sourceNonce; const pane = node('div'); sourcePane.replaceChildren(pane);
@@ -1639,7 +1640,7 @@ async function renderStoryEditor(parent) {
     if (origin) {
       const meta = node('div', null, 'story-origin'); meta.append(node('small', STORY_ORIGINS[origin.origin]));
       if (origin.region_ids?.length) meta.append(button('원본 위치 보기', async () => {
-        const run = stage.data.extractions.find(r => r.id === origin.extraction_id && !r.redacted);
+        const run = runs.find(r => r.id === origin.extraction_id);
         if (run) await showSource(run, origin.region_ids);
       })); form.append(meta);
     }
