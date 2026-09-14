@@ -150,7 +150,7 @@ class Store:
         if self.epoch(project) != expected:
             raise AppError("근거가 변경됐습니다. 최신 자료로 다시 시도하세요.", 409)
 
-    def write(self, project, inserts=(), updates=(), expected_epoch=None):
+    def write(self, project, inserts=(), updates=(), expected_epoch=None, checks=()):
         """One transaction for a complete turn/PRD update and its version guards.
 
         inserts: (kind, body, optional id); updates: (kind, id, changes, expected version).
@@ -163,6 +163,11 @@ class Store:
             epoch = current["epoch"] if current else 0
             if expected_epoch is not None and epoch != expected_epoch:
                 raise AppError("근거가 변경됐습니다. 최신 자료로 다시 시도하세요.", 409)
+            # Read-version guards share the write transaction without mutating inputs.
+            for kind, rid, expected in checks:
+                row = db.execute("SELECT body FROM records WHERE id=? AND project_id=? AND kind=?", (rid, project, kind)).fetchone()
+                if not row or json.loads(row["body"]).get("version", 1) != expected:
+                    raise AppError("기획 입력이 변경됐습니다. 최신 내용으로 다시 생성하세요.", 409)
             changed = False
             for kind, body, rid in inserts:
                 obj = dict(body, id=rid or str(uuid.uuid4()), project_id=project, kind=kind, created_at=timestamp(), version=1)

@@ -84,6 +84,13 @@ class Service(Research, Voc, Planning, Chat, Assets):
             if record.get("kind") in ("message", "persona", "proposal", "debrief"):
                 return False
             return True
+        if record.get("kind") == "debrief":
+            group_ids = {eid for key in ("common_needs", "disagreements", "hypotheses", "unsupported_claims", "followup_questions")
+                for row in record.get(key, []) for eid in row.get("evidence_ids", [])}
+            tracked_ids = {d["id"] for d in dependencies if d["kind"] in ("insight", "voc")}
+            if not group_ids.issubset(tracked_ids):
+                # Old edited summaries may have citations without version lineage.
+                return False
         allowed = {(e["kind"], e["id"], e["version"]) for e in self.knowledge(project)}
         for d in dependencies:
             if d["kind"] == "persona":
@@ -171,17 +178,20 @@ class Service(Research, Voc, Planning, Chat, Assets):
                     lines.append("- " + item["text"] + " " + " ".join("["+i+"]" for i in item["evidence_ids"]) + " · 메시지 " + ", ".join(item["message_ids"]))
         for r in package["proposals"]:
             lines.extend(["", "## PRD 변경 제안 · " + r["state"], "기준 PRD: " + r["target_prd_id"] + " v" + str(r["target_prd_version"]), r["text"]])
+            lines.append("제안 ID: " + r["id"] + " v" + str(r["version"]))
+            if r.get("applied_prd_version"):
+                lines.append("반영 PRD: " + r["target_prd_id"] + " v" + str(r["applied_prd_version"]))
             for change in r["changes"]:
-                lines.extend(["### " + change["section_title"], "변경 전: " + change["before"], "변경 후: " + change["after"],
+                lines.extend(["### " + change["section_title"], "문단 ID: " + change["section_id"], "변경 전: " + change["before"], "변경 후: " + change["after"],
                     "이유: " + change["rationale"], " ".join("["+i+"]" for i in change["evidence_ids"])])
         if package["prd"]:
             r = package["prd"]
-            lines.extend(["", "## 현재 PRD · v" + str(r["version"])])
+            lines.extend(["", "## 현재 PRD · v" + str(r["version"]), "PRD ID: " + r["id"]])
             if r.get("redacted"):
                 lines.append(r["text"])
             else:
                 for section in r["sections"]:
-                    lines.extend(["### " + section["title"], section["text"]])
+                    lines.extend(["### " + section["title"], "문단 ID: " + section["id"], section["text"]])
         lines.extend(["", "## 근거 목록"])
         for e in package["evidence"]:
             lines.extend(["", "["+e["id"]+"] v" + str(e["version"]) + " · " + e["evidence_type"], e["text"]])

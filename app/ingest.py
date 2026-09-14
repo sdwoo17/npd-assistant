@@ -44,7 +44,11 @@ def classify_all(value, features=None):
         if score:
             scored.append((score, key))
     ordered = [k for _, k in sorted(scored, key=lambda x: (-x[0], x[1]))]
-    return ordered or ["unclassified"]
+    if not ordered:
+        return ["unclassified"]
+    # One VoC belongs to one service, including initial rule classification.
+    service = features[ordered[0]].get("service_id", "advertiser_portal")
+    return [key for key in ordered if features[key].get("service_id", "advertiser_portal") == service]
 
 
 def classify(value, features=None):
