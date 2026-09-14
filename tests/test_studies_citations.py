@@ -141,6 +141,21 @@ class StudyTests(unittest.TestCase):
         self.post('personas/archive', persona_id=person['id'], expected_version=archived['version'], archived=False)
         self.start(row)
 
+    def test_revoked_profiles_can_leave_pool_without_exposing_content(self):
+        person = self.f.persona('RevokedProfileSecretName')
+        self.s.insight_release(self.owner, {'insight_id': self.f.insight['id'], 'published': False})
+        boot = self.s.get(self.po, '/api/bootstrap')
+        self.assertEqual(boot['persona_pool_count'], 1)
+        self.assertEqual(boot['personas'], [])
+        unavailable = boot['unavailable_personas'][0]
+        self.assertEqual(unavailable['id'], person['id'])
+        self.assertNotIn('RevokedProfileSecretName', json.dumps(unavailable))
+        saved = self.post('personas/archive', persona_id=unavailable['id'], expected_version=unavailable['version'], archived=True)
+        self.assertTrue(saved['redacted'])
+        self.assertEqual(self.s.get(self.po, '/api/bootstrap')['persona_pool_count'], 0)
+        with self.assertRaises(AppError):
+            self.post('personas/archive', persona_id=saved['id'], expected_version=saved['version'], archived=False)
+
     def test_completion_rejects_unseen_debrief_version_and_new_messages(self):
         row = self.start(self.guide(self.prepare()))
         self.discuss(row)

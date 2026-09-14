@@ -252,6 +252,7 @@ async function page(name) {
   if (name === "voc") await loadVoc();
   if (name === "prd") await renderPlanning();
   if (name === "studies") await renderStudies();
+  if (name === "personas") await refresh();
 }
 async function showEvidence(id) {
   state.evidence = await api("/api/evidence");
@@ -394,6 +395,14 @@ function renderPersonas() {
       await api("/api/personas/archive", { persona_id: p.id, expected_version: p.version, archived: false });
       await refresh();
     })));
+  for (const p of state.boot.unavailable_personas || []) {
+    const row = node("div", null, "record");
+    row.append(node("p", p.text), button("사용 불가 프로필 보관 · " + p.id, async () => {
+      await api("/api/personas/archive", { persona_id: p.id, expected_version: p.version, archived: true });
+      await refresh();
+    }));
+    $("persona-archive-list").append(row);
+  }
   $("chat-personas").replaceChildren(
     ...state.boot.personas.map((p) =>
       button(
@@ -1418,7 +1427,7 @@ $("study-create").onsubmit = guard(async () => {
 async function renderStudies() {
   await refresh();
   const data = await api("/api/studies");
-  $("study-list").replaceChildren(node("p", `페르소나 풀 ${state.boot.personas.length}/${data.persona_pool_limit}명 · 스터디 참여자는 최대 ${data.participant_limit}명`),
+  $("study-list").replaceChildren(node("p", `페르소나 풀 ${state.boot.persona_pool_count}/${data.persona_pool_limit}명 (선택 가능 ${state.boot.personas.length}명) · 스터디 참여자는 최대 ${data.participant_limit}명`),
     ...data.studies.map(r => r.redacted ? node("p", r.text, "warning") : button(
       r.title + " · " + (r.status === "completed" ? "완료" : studyStageNames[r.stage]), async () => {
         state.studyId = r.id;

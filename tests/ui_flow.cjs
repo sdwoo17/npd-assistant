@@ -192,3 +192,15 @@ test("PO completes the five-stage FGI and checks an external PRD without storing
     assert.equal($(id).textContent,"",id);
   assert.equal($("citation-check-text").value,"");
 });
+
+test("unavailable persona profiles can be archived without exposing their old text", async()=>{
+  const {w,$,request}=await screen("owner");
+  const evidence=(await request("/api/evidence")).find(e=>e.kind==="insight");
+  const person=await request("/api/personas",{name:"접근불가프로필",segment:"합성",goals:"숨겨져야할목표",constraints:"합성",assumptions:["가정"],evidence_ids:[evidence.id]});
+  await request("/api/insights/release",{insight_id:evidence.id,published:false});
+  const before=(await request("/api/bootstrap")).persona_pool_count;
+  await click(w.document.querySelector("[data-page='personas']"));
+  assert.doesNotMatch($("persona-archive-list").textContent,/숨겨져야할목표|접근불가프로필/);
+  await click(byText($("persona-archive-list"),person.id));
+  assert.equal((await request("/api/bootstrap")).persona_pool_count,before-1);
+});

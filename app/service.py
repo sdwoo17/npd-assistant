@@ -249,6 +249,8 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies):
                 "model_name": self.model.model if self.model.configured else None, "model_provider": getattr(self.model, "provider", "test"),
                 "model_connection_verified": self._last_model_success is not None, "last_model_success": self._last_model_success,
                 "knowledge_count": len(self.knowledge(p)), "version": "0.2.0",
+                "persona_pool_count": sum(not r.get("archived", False) for r in self.store.list(p, "persona")),
+                "unavailable_personas": [self.redacted(r) for r in self.store.list(p, "persona") if not r.get("archived") and not self.accessible(p, r)],
                 "archived_personas": [r for r in self.store.list(p, "persona") if r.get("archived") and self.accessible(p, r)],
                 "projects": self.store.projects(user["id"]), "personas": [r for r in self.store.list(p, "persona") if not r.get("archived") and self.accessible(p, r)], "conversations": [{k: r[k] for k in ("id", "title", "mode", "version") if k in r} for r in self.store.list(p, "conversation")]}
         if path.startswith(("/api/research", "/api/insights/versions", "/api/jobs")):

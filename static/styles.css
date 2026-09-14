@@ -857,9 +857,14 @@ footer {
     font-size: 24px;
   }
   .sidebar .logo small,
-  .project-label,
-  .sidebar-bottom {
+  .project-label {
     display: none;
+  }
+  .sidebar-bottom {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-top: 10px;
   }
   nav {
     display: flex;
