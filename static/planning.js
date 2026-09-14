@@ -78,6 +78,7 @@
     view.replaceChildren();const asset=p.assets.find(a=>a.id===p.activeAsset);if(!asset)return;
     view.append(node("p",asset.filename+" · 원본 v"+asset.version+" · "+asset.sharing,"micro"));
     const raw=await api("/api/planning-assets/raw/"+asset.id),run=p.runs[asset.id];
+    if(p.activeAsset!==asset.id||!view.isConnected)return;
     const scroll=node("div",null,"source-scroll"),regionList=node("div");view.append(scroll);
     if(raw.media_type==="image"){
       const canvas=node("canvas");canvas.setAttribute("aria-label","기획 원본과 분석 영역");scroll.append(canvas);

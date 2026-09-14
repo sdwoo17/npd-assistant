@@ -214,6 +214,19 @@ class Stage2Tests(unittest.TestCase):
             self.assertEqual(BedrockModel('test-image-model','ap-northeast-2',client,'json_schema').generate('planning_image',payload,
                 images=[{'format':'jpeg','bytes':b'SYNTHETIC_IMAGE_BYTES'}]),answer)
 
+    def test_validation_rejects_source_withdrawn_after_story_read(self):
+        asset=self.asset();row=self.story(source_refs=[{'id':asset['id'],'version':asset['version']}])
+        original=self.s.story
+        def revoke_after_read(*args,**kwargs):
+            snapshot=original(*args,**kwargs)
+            self.post('/api/planning-assets/withdraw',{'asset_id':asset['id'],'expected_version':asset['version']})
+            return snapshot
+        with patch.object(self.s,'story',side_effect=revoke_after_read):
+            with self.assertRaises(AppError) as error:self.post('/api/stories/validation',{'story_id':row['id'],
+                'expected_version':row['version'],'state':'planned','note':'검증 예정'})
+        self.assertEqual(error.exception.status,409)
+        self.assertEqual(self.f.store.get(self.u['project_id'],'user_story',row['id'])['version'],row['version'])
+
     def test_public_search_requires_configuration(self):
         with patch.dict(os.environ,{'NPD_PUBLIC_SEARCH_KEY':''}):
             with self.assertRaises(AppError) as error:self.post('/api/public-research',{'query':'공개 리테일 미디어'})

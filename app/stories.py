@@ -121,7 +121,7 @@ class Stories:
                 'state':status,'reason':reason,'reviewed_by':user['id']},None)],expected_epoch=epoch)[-1]
 
     def story_validation(self, user, body):
-        p=user['project_id']; row=self.story(user,text(body,'story_id',80)); epoch=self.store.epoch(p)
+        p=user['project_id']; epoch=self.store.epoch(p); row=self.story(user,text(body,'story_id',80))
         state=body.get('state')
         if state not in ('unverified','planned','actual_results'):
             raise AppError('고객 검증 상태를 확인하세요.')
