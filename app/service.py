@@ -11,13 +11,14 @@ from .voc import Voc
 from .planning import Planning
 from .chat import Chat
 from .assets import Assets
+from .stories import Stories
 from .store import AppError, timestamp
 
 # Public compatibility export for earlier integrations.
 from .contracts import validate_answer as cited
 
 
-class Service(Research, Voc, Planning, Chat, Assets):
+class Service(Research, Voc, Planning, Chat, Assets, Stories):
     def __init__(self, store, model):
         self.store, self.model = store, model
         self._locks = {}
@@ -78,10 +79,22 @@ class Service(Research, Voc, Planning, Chat, Assets):
         return insights + voc
 
     def accessible(self, project, record):
+        if record.get("kind") in ("user_story", "story_extraction"):
+            context = self.stage_context(project)
+            current = {k: context[k] for k in ("kind", "id", "version")} if context else None
+            if record.get("context_ref") != current:
+                return False
+        for baseline in record.get("baseline_refs", []):
+            try:
+                prd = self.store.get(project, "prd", baseline["id"])
+            except AppError:
+                return False
+            if prd["version"] != baseline["version"] or not self.accessible(project, prd):
+                return False
         dependencies = record.get("dependencies")
         if dependencies is None:
             # Legacy generated artifacts have incomplete provenance; never grandfather them in.
-            if record.get("kind") in ("message", "persona", "proposal", "debrief"):
+            if record.get("kind") in ("message", "persona", "proposal", "debrief", "user_story", "story_extraction", "story_requirement"):
                 return False
             return True
         if record.get("kind") == "debrief":
@@ -99,6 +112,15 @@ class Service(Research, Voc, Planning, Chat, Assets):
                 except AppError:
                     return False
                 if not candidate or not self.accessible(project, candidate):
+                    return False
+            elif d["kind"] in ("planning_asset", "product_context", "user_story", "story_requirement"):
+                try:
+                    candidate = self.store.get(project, d["kind"], d["id"])
+                except AppError:
+                    return False
+                if candidate["version"] != d["version"] or candidate.get("withdrawn") or not self.accessible(project, candidate):
+                    return False
+                if d["kind"] == "user_story" and candidate.get("definition_status") != "confirmed":
                     return False
             elif (d["kind"], d["id"], d["version"]) not in allowed:
                 return False
@@ -207,6 +229,8 @@ class Service(Research, Voc, Planning, Chat, Assets):
         parsed = urlparse(route)
         path, query = parsed.path, {k: v[-1] for k, v in parse_qs(parsed.query).items()}
         p = user["project_id"]
+        if path == "/api/stage2" or path.startswith(("/api/stage2/", "/api/planning-assets/content/", "/api/stories/versions/")):
+            return self.stage_get(user, path, query)
         if path == "/api/assets/persona-templates":
             return self.template_previews(user)
         if path == "/api/model/status":
@@ -281,6 +305,11 @@ class Service(Research, Voc, Planning, Chat, Assets):
             owner(user)
             r = self.store.get(p, "voc", body.get("voc_id"))
             return self.store.update(p, "voc", r["id"], {"withdrawn": True}, r["version"])
+        routes.update({"/api/stage2/context": self.save_stage_context,
+            "/api/planning-assets": self.upload_planning_asset, "/api/planning-assets/withdraw": self.withdraw_planning_asset,
+            "/api/stories/extract": self.extract_stories, "/api/stories/apply-candidate": self.apply_story_candidate,
+            "/api/stories": self.save_story, "/api/stories/confirm": self.confirm_story,
+            "/api/stories/reorganize": self.reorganize_stories, "/api/stage2/prd": self.create_story_prd, "/api/story-requirements": self.save_story_requirement})
         if route in routes:
             return routes[route](user, body)
         raise AppError("경로를 찾을 수 없습니다.", 404)

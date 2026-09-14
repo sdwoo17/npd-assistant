@@ -19,7 +19,7 @@ def main():
     output = Path(args.output).resolve(); output.mkdir(parents=True, exist_ok=True)
     commands = [[sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-v'],
                 ['node', '--test', 'tests/ui_flow.cjs']]
-    if args.browser: commands.append(['node', '--test', 'tests/browser_flow.cjs'])
+    if args.browser: commands.append(['node', '--test', 'tests/browser_flow.cjs', 'tests/stories_browser.cjs'])
     runs = []
     for iteration in range(1, args.passes + 1):
         for index, cmd in enumerate(commands, 1):
@@ -30,7 +30,10 @@ def main():
             result = {'pass': iteration, 'command': cmd, 'seconds': round(time.perf_counter()-started, 3), 'returncode': proc.returncode, 'log': logfile.name}
             runs.append(result); print(json.dumps(result), flush=True)
             (output / 'summary.json').write_text(json.dumps({'seed_range': [0, 19], 'csv_rows_per_python_pass': 1000, 'state_transitions_per_python_pass': 300, 'runs': runs}, indent=2))
-            if proc.returncode: raise SystemExit(proc.returncode)
+            if proc.returncode:
+                # Keep diagnostics visible in the job log as well as its artifact.
+                print(logfile.read_text()[-20000:], flush=True)
+                raise SystemExit(proc.returncode)
     print('All bounded regression passes completed. Model responses were test doubles; not live AI quality evidence.')
 
 if __name__ == '__main__': main()

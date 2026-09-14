@@ -3,10 +3,13 @@ import signal
 from app.server import Server
 from app.assets import register_templates
 from tests.helpers import Fixture, encoded
+from tests.story_fixture import StoryModel
 
 
 def main():
     fixture = Fixture()
+    fixture.model = StoryModel()
+    fixture.service.model = fixture.model
     fixture.store.create_user("owner@example.test", "Owner-test-pass!", "owner", "project-a")
     fixture.store.create_user("po@example.test", "Planner-test-pass!", "po", "project-a")
     fixture.persona()
