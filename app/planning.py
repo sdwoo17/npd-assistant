@@ -2,7 +2,7 @@
 import re
 import unicodedata
 import uuid
-from .contracts import text, optional, strings, revision, dependency_map, validate_answer, inline_text
+from .contracts import text, optional, strings, revision, dependency_map, validate_answer, validate_claims, inline_text
 from .ingest import decode_file
 from .store import AppError
 
@@ -114,6 +114,10 @@ class Planning:
         answer = validate_answer(result, evidence, statistics)
         message_ids, evidence_ids = {m["id"] for m in messages}, {e["id"] for e in evidence}
         groups = self.debrief_groups(result, message_ids, evidence_ids)
+        by_id = {e["id"]: e for e in evidence}
+        for rows in groups.values():
+            for row in rows:
+                validate_claims(row["text"], [by_id[eid] for eid in row["evidence_ids"]], statistics)
         answer["evidence_ids"] = sorted(set(answer["evidence_ids"]) | {eid for rows in groups.values() for row in rows for eid in row["evidence_ids"]})
         return self.store.write(p, inserts=[("debrief", {**answer, **groups, "text": inline_text(answer), "conversation_id": conv["id"],
             "source_message_ids": [m["id"] for m in messages], "dependencies": deps, "model": self.model.model,
@@ -217,12 +221,20 @@ class Planning:
         state = body.get("state")
         if state not in ("accepted", "held"):
             raise AppError("accepted 또는 held를 선택하세요.")
+        expected = revision(body)
+        # A retry may acknowledge only this actor's unchanged decision result.
+        # An edit after a hold invalidates the receipt through its new version.
+        if old["state"] == state and (expected == old["version"] or (
+            old.get("decision_input_version") == expected and old["version"] == expected + 1
+            and old.get("decided_by") == user["id"])):
+            return old
+        if expected != old["version"]:
+            raise AppError("제안이 변경됐습니다. 새로고침하고 변경 내용을 검토한 후 다시 결정하세요.", 409)
         if old["state"] == "accepted":
-            if state == "accepted":
-                return old
             raise AppError("반영된 제안은 보류로 되돌릴 수 없습니다. 새 PRD 변경안을 작성하세요.", 409)
+        decision = {"state": state, "decided_by": user["id"], "decision_input_version": expected}
         if state == "held":
-            return self.store.update(p, "proposal", old["id"], {"state": state, "decided_by": user["id"]}, old["version"])
+            return self.store.write(p, updates=[("proposal", old["id"], decision, expected)], expected_epoch=epoch)[0]
         prd = self.store.get(p, "prd", old["target_prd_id"])
         if prd["version"] != old["target_prd_version"]:
             raise AppError("기준 PRD가 변경됐습니다. 최신 버전에서 제안을 다시 생성하세요.", 409)
@@ -238,7 +250,7 @@ class Planning:
         deps = dependency_map([prd, old])
         result = self.store.write(p, updates=[
             ("prd", prd["id"], {"sections": sections, "dependencies": deps, "last_proposal_id": old["id"], "decisions": old.get("decisions", [])}, prd["version"]),
-            ("proposal", old["id"], {"state": "accepted", "decided_by": user["id"], "applied_prd_version": prd["version"] + 1}, old["version"])
+            ("proposal", old["id"], {**decision, "applied_prd_version": prd["version"] + 1}, expected)
         ], expected_epoch=epoch, checks=checks)
         return result[-1]
 

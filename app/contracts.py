@@ -101,21 +101,13 @@ def quantities(value):
         r"(?<!\d)(\d[\d,]*(?:\.\d+)?)\s*(%|퍼센트|percent\b|건|명|원|달러|usd\b|krw\b)", value, re.IGNORECASE)}
 
 
-def validate_answer(answer, evidence, statistics=None, interview=False):
-    if not isinstance(answer, dict):
-        raise AppError("AI 응답은 객체여야 합니다.", 502)
+def validate_claims(content, evidence, statistics=None):
+    """Apply the same claim guards to summaries and individual generated fields.
+
+    Empty evidence is valid for qualitative questions/hypotheses, but it cannot
+    authorize source citations, numerical claims or real-customer assertions.
+    """
     by_id = {e["id"]: e for e in evidence}
-    ids = answer.get("evidence_ids")
-    if not isinstance(ids, list) or not ids or any(not isinstance(i, str) or i not in by_id for i in ids):
-        raise AppError("AI 응답의 근거를 검증하지 못했습니다.", 502)
-    assumptions = answer.get("assumptions", [])
-    try:
-        assumptions = strings(assumptions, 30)
-        content = text(answer, "text", 20000)
-    except AppError:
-        raise AppError("AI 응답의 텍스트·가정 형식이 올바르지 않습니다.", 502)
-    if interview and not assumptions:
-        raise AppError("가상 인터뷰는 추론·가정을 명시해야 합니다.", 502)
     source_text = "\n".join(e["text"] for e in evidence)
     allowed_numbers, allowed_quantities = numbers(source_text), quantities(source_text)
     if statistics:
@@ -136,6 +128,30 @@ def validate_answer(answer, evidence, statistics=None, interview=False):
         raise AppError("근거·서버 집계에 없는 수치가 포함됐습니다. 수치를 확인해 다시 요청하세요.", 502)
     if not quantities(content).issubset(allowed_quantities):
         raise AppError("수치의 단위가 근거·서버 집계와 일치하지 않습니다.", 502)
+    # This is not semantic truth verification; human review remains mandatory.
+    for match in re.findall(r"\[([^\]\n]+)\]", content):
+        if re.fullmatch(r"[0-9a-f-]{36}", match) and match not in by_id:
+            raise AppError("본문에 확인되지 않은 인용 ID가 있습니다.", 502)
+    if any(p in content for p in ("실제 광고주 전원", "모든 고객이 동의", "실제 고객 100%", "실제 인터뷰 결과")) and not any(content in e["text"] and e["evidence_type"] == "real" for e in evidence):
+        raise AppError("가상 추론을 실제 고객 검증으로 표현할 수 없습니다.", 502)
+
+
+def validate_answer(answer, evidence, statistics=None, interview=False):
+    if not isinstance(answer, dict):
+        raise AppError("AI 응답은 객체여야 합니다.", 502)
+    by_id = {e["id"]: e for e in evidence}
+    ids = answer.get("evidence_ids")
+    if not isinstance(ids, list) or not ids or any(not isinstance(i, str) or i not in by_id for i in ids):
+        raise AppError("AI 응답의 근거를 검증하지 못했습니다.", 502)
+    assumptions = answer.get("assumptions", [])
+    try:
+        assumptions = strings(assumptions, 30)
+        content = text(answer, "text", 20000)
+    except AppError:
+        raise AppError("AI 응답의 텍스트·가정 형식이 올바르지 않습니다.", 502)
+    if interview and not assumptions:
+        raise AppError("가상 인터뷰는 추론·가정을 명시해야 합니다.", 502)
+    validate_claims(content, evidence, statistics)
     observations = answer.get("observations", [])
     if not isinstance(observations, list) or len(observations) > 30:
         raise AppError("관찰 근거 형식이 올바르지 않습니다.", 502)
@@ -148,13 +164,6 @@ def validate_answer(answer, evidence, statistics=None, interview=False):
             raise AppError("직접 인용이 제공된 근거와 일치하지 않습니다.", 502)
         source = by_id[item["evidence_id"]]
         clean.append({"evidence_id": item["evidence_id"], "quote": quote, "evidence_type": source["evidence_type"]})
-    # Claims remain planning hypotheses unless anchored in an exact observed excerpt.
-    # This is not semantic truth verification; rendered labels and human review remain mandatory.
-    for match in re.findall(r"\[([^\]\n]+)\]", content):
-        if re.fullmatch(r"[0-9a-f-]{36}", match) and match not in by_id:
-            raise AppError("본문에 확인되지 않은 인용 ID가 있습니다.", 502)
-    if any(p in content for p in ("실제 광고주 전원", "모든 고객이 동의", "실제 고객 100%", "실제 인터뷰 결과")) and not any(content in e["text"] and e["evidence_type"] == "real" for e in evidence):
-        raise AppError("가상 추론을 실제 고객 검증으로 표현할 수 없습니다.", 502)
     return {"text": content, "evidence_ids": list(dict.fromkeys(ids)), "assumptions": assumptions,
             "observations": clean, "interpretation_status": "hypothesis_requires_po_review"}
 

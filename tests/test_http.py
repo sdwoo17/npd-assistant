@@ -68,7 +68,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(len(chat["messages"]), 2)
         self.assertIn("자동 테스트", chat["messages"][-1]["text"])
         _, proposal, _ = self.request("POST", "/api/proposals", {"conversation_id": conv["id"]})
-        self.assertEqual(self.request("POST", "/api/proposals/decision", {"proposal_id": proposal["id"], "state": "accepted"})[0], 201)
+        self.assertEqual(self.request("POST", "/api/proposals/decision", {"proposal_id": proposal["id"], "expected_version": proposal["version"], "state": "accepted"})[0], 201)
         status, export, _ = self.request("GET", "/api/export/"+conv["id"])
         self.assertEqual(status, 200)
         self.assertNotIn(CANARY, json.dumps(export))

@@ -73,9 +73,13 @@ Filters: `date_from,date_to,feature,service_id,segment,source_name,evidence_type
 | POST /api/proposals | Session | conversation_id → target PRD/version and before/after changes |
 | POST /api/proposals/update | Session | proposal_id,expected_version,changes:[{section_id,after,rationale}] |
 | GET /api/proposals | Session | Currently available proposals |
-| POST /api/proposals/decision | Session | proposal_id,state accepted/held; acceptance atomically creates PRD version |
+| POST /api/proposals/decision | Session | proposal_id,expected_version,state accepted/held; stale versions return 409; acceptance atomically creates PRD version |
 | GET /api/export/{conversation_id} | Session | `npd.research-package.v2` JSON |
 | GET /api/export/{conversation_id}?format=markdown | Session | {format:"markdown",text:"..."} with inline IDs and evidence appendix |
+
+Proposal decisions require the version displayed to the reviewer, including holds. Missing or invalid `expected_version` returns 400. An unchanged accepted/held result can be read again using its current version, or retried by the same actor with the version that produced that decision. A later edit or another actor's decision does not authorize a stale retry. Replays never create another PRD version.
+
+Generated debriefs validate all five summary groups before saving. Each item's numerical quantities, inline citation IDs and real-customer assertions are checked against its linked evidence and the conversation's server-computed statistics. Qualitative hypotheses/questions may have no evidence IDs. A failing item rejects the entire generated debrief. These structural guards do not establish semantic truth or replace PO review.
 
 Interview limits: 8 personas, 1,000 prior messages, 160,000 characters of text; overflow produces an explicit error rather than silent history truncation. Provider context/output limits may be lower. Multi-persona turns validate all responses before saving any messages. Idempotency keys are scoped to project+conversation; repeating a committed request does not append messages. Across independent service instances simultaneous requests may receive a retryable 409; supported deployment is one server process.
 

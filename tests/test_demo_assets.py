@@ -88,7 +88,7 @@ class DemoAssetTests(unittest.TestCase):
         service.make_debrief(po, {"conversation_id": cid})
         service.decision(po, {"conversation_id": cid, "text": "자동 집행은 제외한다."})
         proposal = service.make_proposal(po, {"conversation_id": cid})
-        applied = service.decide_proposal(po, {"proposal_id": proposal["id"], "state": "accepted"})
+        applied = service.decide_proposal(po, {"proposal_id": proposal["id"], "expected_version": proposal["version"], "state": "accepted"})
         self.assertEqual(applied["applied_prd_version"], 2)
         md = service.get(po, "/api/export/" + cid + "?format=markdown")["text"]
         self.assertNotIn(CANARY, md)

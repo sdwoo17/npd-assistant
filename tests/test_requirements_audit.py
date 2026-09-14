@@ -42,7 +42,7 @@ class RequirementsAuditTests(unittest.TestCase):
         return self.s.post(self.po, '/api/proposals', {'conversation_id': conv['id']})
 
     def accept(self, proposal):
-        return self.s.post(self.po, '/api/proposals/decision', {'proposal_id': proposal['id'], 'state': 'accepted'})
+        return self.s.post(self.po, '/api/proposals/decision', {'proposal_id': proposal['id'], 'expected_version': proposal['version'], 'state': 'accepted'})
 
     def test_empty_project_returns_no_evidence_without_model_call(self):
         user = self.f.other

@@ -40,7 +40,7 @@ async function screen(role) {
     if(path==="/api/bootstrap")initialResolve();
     return r;
   };
-  w.eval(script);
+  const request = w.eval(script + "\napi;");
   await initialRequest;
   await new Promise(resolve=>setTimeout(resolve,25));
   const $=id=>w.document.getElementById(id);
@@ -48,7 +48,7 @@ async function screen(role) {
   $("password").value=role==="owner"?"Owner-test-pass!":"Planner-test-pass!";
   await submit($("login"));
   assert.equal($("workspace").hidden,false,$("login-error").textContent);
-  return {w,$};
+  return {w,$,request};
 }
 async function submit(element){await element.onsubmit({preventDefault(){},currentTarget:element});}
 async function click(element){assert.ok(element,"Button exists");await element.onclick({currentTarget:element});}
@@ -118,4 +118,30 @@ test("PO UI filters VoC, interviews tagged personas, cites evidence and accepts 
   await click(byText($("proposal-list"),"제안으로 채택"));
   assert.equal($("proposal-list").querySelector(".state").textContent,"채택");
   assert.doesNotMatch(w.document.body.textContent,/PRIVATE-RESEARCH-CANARY|UI-PRIVATE-CANARY/);
+});
+
+test("a stale PO screen cannot accept another editor's proposal until refreshed", async()=>{
+  const reviewer = await screen("po"), editor = await screen("po");
+  const conv = await reviewer.request("/api/conversations", {title:"동시 편집 합성 검증"});
+  await reviewer.request("/api/chat", {conversation_id:conv.id, message:"소재 리포트 개선"});
+  const proposal = await reviewer.request("/api/proposals", {conversation_id:conv.id});
+  await click(reviewer.w.document.querySelector("[data-page='prd']"));
+  const staleCard = reviewer.$("proposal-list").lastElementChild;
+  const changedText = "다른 PO가 정정한 합성 요구사항";
+  await editor.request("/api/proposals/update", {
+    proposal_id:proposal.id, expected_version:proposal.version,
+    changes:proposal.changes.map(c=>({...c, after:changedText})),
+  });
+  await click(byText(staleCard,"제안으로 채택"));
+  assert.match(reviewer.$("notice").textContent,/제안이 변경됐습니다/);
+  const unchanged = (await editor.request("/api/prds")).find(p=>p.id===conv.prd_id);
+  assert.equal(unchanged.version, proposal.target_prd_version);
+  assert.equal((await editor.request("/api/proposals")).find(p=>p.id===proposal.id).state,"draft");
+  await click(reviewer.w.document.querySelector("[data-page='prd']"));
+  const refreshedCard = reviewer.$("proposal-list").lastElementChild;
+  assert.equal(refreshedCard.querySelector('[data-field="after"]').value,changedText);
+  await click(byText(refreshedCard,"제안으로 채택"));
+  const applied = (await editor.request("/api/prds")).find(p=>p.id===conv.prd_id);
+  assert.equal(applied.version,proposal.target_prd_version+1);
+  assert.ok(applied.sections.some(s=>s.text.includes(changedText)));
 });
