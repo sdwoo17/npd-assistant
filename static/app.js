@@ -900,6 +900,7 @@ async function renderProposals() {
             button(label, async () => {
               const result = await api("/api/proposals/decision", {
                 proposal_id: p.id,
+                expected_version: p.version,
                 state: value,
               });
               await renderPlanning();

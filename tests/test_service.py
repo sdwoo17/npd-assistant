@@ -169,7 +169,7 @@ class ServiceTests(unittest.TestCase):
         conv = self.f.conversation()
         self.s.post(self.po, "/api/chat", {"conversation_id": conv["id"], "message": "소재 분석 요구"})
         proposal = self.s.post(self.po, "/api/proposals", {"conversation_id": conv["id"]})
-        self.s.post(self.po, "/api/proposals/decision", {"proposal_id": proposal["id"], "state": "accepted"})
+        self.s.post(self.po, "/api/proposals/decision", {"proposal_id": proposal["id"], "expected_version": proposal["version"], "state": "accepted"})
         exported = self.s.get(self.po, "/api/export/" + conv["id"])
         self.assertEqual(exported["proposals"][0]["state"], "accepted")
         self.assertEqual(exported["evidence"][0]["id"], self.f.insight["id"])

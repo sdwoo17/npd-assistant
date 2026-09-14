@@ -93,7 +93,7 @@ def exercise_http(owner, po, marker, steps):
     call(po,'/api/conversations/decisions',{'conversation_id':conv['id'],'text':'자동 광고 집행을 제외하고 비교 조건과 승인 근거를 우선한다.'})
     call(po,'/api/debriefs',{'conversation_id':conv['id']})
     proposal=call(po,'/api/proposals',{'conversation_id':conv['id']})
-    applied=call(po,'/api/proposals/decision',{'proposal_id':proposal['id'],'state':'accepted'})
+    applied=call(po,'/api/proposals/decision',{'proposal_id':proposal['id'],'expected_version':proposal['version'],'state':'accepted'})
     require(applied['applied_prd_version']==2)
     export=call(po,'/api/export/'+conv['id']+'?format=markdown')
     require(export['text'] and marker not in export['text'])
