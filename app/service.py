@@ -11,13 +11,15 @@ from .voc import Voc
 from .planning import Planning
 from .chat import Chat
 from .assets import Assets
+from .citations import Citations
+from .studies import Studies, GUIDE_SECTIONS
 from .store import AppError, timestamp
 
 # Public compatibility export for earlier integrations.
 from .contracts import validate_answer as cited
 
 
-class Service(Research, Voc, Planning, Chat, Assets):
+class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies):
     def __init__(self, store, model):
         self.store, self.model = store, model
         self._locks = {}
@@ -140,7 +142,18 @@ class Service(Research, Voc, Planning, Chat, Assets):
     def export_package(self, user, cid):
         p = user["project_id"]
         conv = self.conversation(user, cid)
-        proposals = [r for r in self.get(user, "/api/proposals") if r["conversation_id"] == cid]
+        study = self.store.get(p, "study", conv["study_id"]) if conv.get("study_id") else None
+        if study and not self.accessible(p, study):
+            study = self.redacted(study)
+        available_proposals = self.get(user, "/api/proposals")
+        proposals = [r for r in available_proposals if r["conversation_id"] == cid]
+        prd = self.store.get(p, "prd", conv["prd_id"]) if conv.get("prd_id") else None
+        if prd and not self.accessible(p, prd):
+            prd = self.redacted(prd)
+        if prd and not prd.get("redacted"):
+            seen = {r["id"] for r in proposals}
+            proposals += [r for r in available_proposals if r["id"] not in seen and r["state"] == "accepted"
+                          and r["target_prd_id"] == prd["id"] and r.get("applied_prd_version", 0) <= prd["version"]]
         debriefs = [r for r in self.get(user, "/api/debriefs") if r["conversation_id"] == cid]
         refs = conv.get("participant_persona_versions", [])
         people = []
@@ -152,16 +165,28 @@ class Service(Research, Voc, Planning, Chat, Assets):
         ids = {eid for r in conv["messages"] + proposals + debriefs + people for eid in r.get("evidence_ids", [])}
         for proposal in proposals:
             ids.update(e["id"] for e in proposal.get("evidence_snapshots", []))
-        prd = self.store.get(p, "prd", conv["prd_id"]) if conv.get("prd_id") else None
-        if prd and not self.accessible(p, prd):
-            prd = self.redacted(prd)
+        if prd and not prd.get("redacted"):
+            ids.update(d["id"] for d in prd.get("dependencies", []) if d["kind"] in ("insight", "voc"))
+        if study and not study.get("redacted"):
+            ids.update(d["id"] for d in study.get("dependencies", []) if d["kind"] in ("insight", "voc"))
         return {"schema_version": "npd.research-package.v2", "exported_at": timestamp(), "conversation": conv,
-            "proposals": proposals, "debriefs": debriefs, "personas": people, "prd": prd,
+            "proposals": proposals, "debriefs": debriefs, "personas": people, "prd": prd, "study": study,
             "evidence": [e for e in self.knowledge(p) if e["id"] in ids],
             "disclosure": "가상 인터뷰는 실제 고객 검증이 아닙니다. 인용 ID·버전을 유지한 자체 교환 형식이며 AXIOM 수신 규격은 별도 검증해야 합니다."}
 
     def markdown_package(self, package):
-        lines = ["# " + package["conversation"]["title"], "", package["disclosure"], "", "## PO 결정"]
+        lines = ["# " + package["conversation"]["title"], "", package["disclosure"]]
+        study = package.get("study")
+        if study and not study.get("redacted"):
+            lines.extend(["", "## FGI 스터디 설계", "스터디 ID: " + study["id"] + " v" + str(study["version"]),
+                          "상태: " + study["status"], "연구 목적: " + study["objective"], "리크루팅 기준: " + study["recruitment_criteria"]])
+            lines += ["연구 질문: " + q for q in study["research_questions"]]
+            lines += ["참여자: " + r["id"] + " v" + str(r["version"]) for r in study["participants"]]
+            for section in study["guide"]["sections"]:
+                lines.extend(["### " + section["title"], section["text"], " ".join("[" + i + "]" for i in section["evidence_ids"])])
+        elif study:
+            lines.extend(["", "## FGI 스터디", study["text"]])
+        lines.extend(["", "## PO 결정"])
         for d in package["conversation"].get("decisions", []):
             if d.get("active", True):
                 lines.append("- " + d["text"] + " [decision:" + d["id"] + "]")
@@ -179,6 +204,7 @@ class Service(Research, Voc, Planning, Chat, Assets):
         for r in package["proposals"]:
             lines.extend(["", "## PRD 변경 제안 · " + r["state"], "기준 PRD: " + r["target_prd_id"] + " v" + str(r["target_prd_version"]), r["text"]])
             lines.append("제안 ID: " + r["id"] + " v" + str(r["version"]))
+            lines.append("원본 대화 ID: " + r["conversation_id"])
             if r.get("applied_prd_version"):
                 lines.append("반영 PRD: " + r["target_prd_id"] + " v" + str(r["applied_prd_version"]))
             for change in r["changes"]:
@@ -209,6 +235,10 @@ class Service(Research, Voc, Planning, Chat, Assets):
         p = user["project_id"]
         if path == "/api/assets/persona-templates":
             return self.template_previews(user)
+        if path == "/api/studies":
+            return {"studies": self.study_list(user), "guide_sections": list(GUIDE_SECTIONS), "participant_limit": 6, "persona_pool_limit": 20}
+        if path.startswith("/api/studies/"):
+            return self.study(user, path.rsplit("/", 1)[-1])
         if path == "/api/model/status":
             owner(user)
             if getattr(self.model, "provider", None) != "bedrock":
@@ -219,7 +249,8 @@ class Service(Research, Voc, Planning, Chat, Assets):
                 "model_name": self.model.model if self.model.configured else None, "model_provider": getattr(self.model, "provider", "test"),
                 "model_connection_verified": self._last_model_success is not None, "last_model_success": self._last_model_success,
                 "knowledge_count": len(self.knowledge(p)), "version": "0.2.0",
-                "projects": self.store.projects(user["id"]), "personas": [r for r in self.store.list(p, "persona") if self.accessible(p, r)], "conversations": [{k: r[k] for k in ("id", "title", "mode", "version") if k in r} for r in self.store.list(p, "conversation")]}
+                "archived_personas": [r for r in self.store.list(p, "persona") if r.get("archived") and self.accessible(p, r)],
+                "projects": self.store.projects(user["id"]), "personas": [r for r in self.store.list(p, "persona") if not r.get("archived") and self.accessible(p, r)], "conversations": [{k: r[k] for k in ("id", "title", "mode", "version") if k in r} for r in self.store.list(p, "conversation")]}
         if path.startswith(("/api/research", "/api/insights/versions", "/api/jobs")):
             return self.research_get(user, path)
         if path == "/api/evidence":
@@ -234,7 +265,8 @@ class Service(Research, Voc, Planning, Chat, Assets):
             return self.conversation(user, path.rsplit("/", 1)[-1])
         if path in ("/api/proposals", "/api/debriefs"):
             kind = "proposal" if path == "/api/proposals" else "debrief"
-            return [r for r in self.store.list(p, kind) if self.accessible(p, r)]
+            rows = [r for r in self.store.list(p, kind) if self.accessible(p, r)]
+            return [{**r, "planning_stale": self.proposal_stale(user, r)} for r in rows] if kind == "proposal" else rows
         if path == "/api/prds":
             return [r if self.accessible(p, r) else self.redacted(r) for r in self.store.list(p, "prd")]
         if path.startswith(("/api/personas/versions/", "/api/prds/versions/")):
@@ -248,6 +280,10 @@ class Service(Research, Voc, Planning, Chat, Assets):
     def post(self, user, route, body):
         p = user["project_id"]
         routes = {"/api/research/upload": self.research_upload, "/api/research/extract": self.research_extract,
+            "/api/citations/verify": self.verify_prd_citations,
+            "/api/studies": self.save_study, "/api/studies/update": self.save_study,
+            "/api/studies/guide": self.study_guide, "/api/studies/start": self.start_study,
+            "/api/studies/complete": self.complete_study, "/api/personas/archive": self.archive_persona,
             "/api/assets/activate-personas": self.activate_templates,
             "/api/model/test": self.test_model,
             "/api/insights": self.insight_save, "/api/insights/update": self.insight_save, "/api/insights/release": self.insight_release,
@@ -257,7 +293,7 @@ class Service(Research, Voc, Planning, Chat, Assets):
             "/api/personas/generate": self.generate_persona, "/api/conversations": self.create_conversation,
             "/api/conversations/state": self.conversation_state, "/api/conversations/decisions": self.decision,
             "/api/prds": self.save_prd, "/api/prds/update": self.save_prd, "/api/prds/import": self.import_prd,
-            "/api/debriefs": self.make_debrief, "/api/debriefs/update": self.review_debrief,
+            "/api/debriefs": self.make_debrief, "/api/debriefs/update": self.review_debrief, "/api/debriefs/select": self.select_debrief,
             "/api/proposals": self.make_proposal, "/api/proposals/update": self.edit_proposal, "/api/proposals/decision": self.decide_proposal}
         if route == "/api/chat":
             cid = text(body, "conversation_id", 80)

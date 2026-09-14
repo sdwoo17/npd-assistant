@@ -73,6 +73,7 @@
             ▤ &nbsp; 지식 관리</button
           ><button data-page="voc">◉ &nbsp; 고객 VoC</button
           ><button data-page="personas">◎ &nbsp; 페르소나</button
+          ><button data-page="studies">◉ &nbsp; FGI 스터디</button
           ><button data-page="prd">▧ &nbsp; PRD 제안</button>
         </nav>
         <div class="sidebar-bottom">
@@ -484,6 +485,7 @@
               </form>
             </div>
             <div id="persona-list" class="persona-grid"></div>
+            <details><summary>보관한 페르소나</summary><div id="persona-archive-list"></div></details>
             <details class="panel">
               <summary>페르소나 직접 정의</summary>
               <form id="persona-form">
@@ -518,7 +520,26 @@
               </form>
             </details>
           </section>
+          <section id="page-studies" hidden>
+            <div class="section-banner"><strong>설계부터 검토본까지</strong><span>가상 FGI는 실제 고객 검증이 아닙니다. 실제 고객에게 확인할 질문과 기획 가설을 정리하세요.</span></div>
+            <form id="study-create" class="panel">
+              <label for="study-new-title">새 FGI 스터디 제목</label><input id="study-new-title" maxlength="200" required>
+              <button type="submit" class="primary">스터디 만들기</button>
+            </form>
+            <div id="study-list"></div>
+            <div id="study-detail"></div>
+          </section>
           <section id="page-prd" hidden>
+            <div class="panel">
+              <h2>외부 PRD 인용 검증</h2>
+              <p>AXIOM 등에서 작성한 PRD를 붙여넣어 현재 프로젝트의 근거와 대조하세요.</p>
+              <form id="citation-check-form">
+                <label for="citation-check-text">확인할 PRD 텍스트</label>
+                <textarea id="citation-check-text" rows="6" maxlength="200000" required></textarea>
+                <button type="submit" class="secondary">인용 검증</button>
+              </form>
+              <div id="citation-check-result" aria-live="polite"></div>
+            </div>
             <div class="section-banner">
               <strong>대화에서 요구사항으로</strong
               ><span

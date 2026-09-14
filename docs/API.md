@@ -96,3 +96,32 @@ Official provider references (retrieved 2026-09-12):
 - https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html
 - https://developers.openai.com/api/docs/guides/structured-outputs
 - https://developer.apple.com/documentation/appstoreconnectapi/get-v1-apps-_id_-customerreviews
+
+## FGI studies and citation verification (2026-09-14)
+
+All routes below require an authenticated session and derive project scope on the server. Every mutation of an existing study requires `expected_version`. Stale requests fail atomically with 409. A failed start creates neither a conversation nor a blank PRD.
+
+| Route | Request / result |
+| --- | --- |
+| GET /api/studies | studies, guide_sections, participant_limit=6, persona_pool_limit=20; revoked studies are redacted |
+| GET /api/studies/{id} | Current available study; unavailable dependencies return 409 |
+| POST /api/studies | title; optional objective,research_questions,recruitment_criteria,persona_ids,target_prd_id; starts in design |
+| POST /api/studies/update | study_id,expected_version + design fields,stage design/recruitment/guide; forward steps cannot be skipped |
+| POST /api/studies/guide | study_id,expected_version; omit sections to call the configured model; supply sections:[{title,text,evidence_ids}] and optional assumptions for PO review |
+| POST /api/studies/start | study_id,expected_version; requires a PO-reviewed guide; atomically pins recruited versions and creates an interview/PRD |
+| POST /api/studies/complete | study_id,expected_version,debrief_id,debrief_version; selected reviewed debrief must cover every current valid message |
+| POST /api/personas/archive | persona_id,expected_version,archived:boolean; archived profiles leave the active pool but remain in historical sessions |
+| POST /api/debriefs/select | conversation_id,expected_version,debrief_id,debrief_version; select a reviewed planning basis |
+| POST /api/citations/verify | text (up to 200,000 characters), optional expected_versions:{id:positive_integer} |
+
+Design → recruitment requires a purpose and at least one research question. Recruitment → guide requires criteria and 1–6 participants. Changing design or participant versions invalidates the guide. A generated guide remains `model_draft` until the PO saves its reviewed sections. Eight sections cover purpose, participants, session structure/timing/warm-up, core research questions, probes, moderator rules, closing and debrief checklist. Planned timing is a moderator assumption; it is not evidence of measured runtime.
+
+Started studies freeze their objective, mode, PRD and recruited persona versions. A question can address a subset using @tags; subsequent group questions still use the complete recruited roster. Retiring a profile blocks new recruitment without invalidating old pinned sessions. Completed studies freeze further messages and debrief edits/selection, while allowing grounded PRD proposals and exports. The active pool cap is enforced in the storage transaction, including simultaneous generation, template activation and restoration. Existing pools over 20 may be edited/reduced but cannot grow; existing general interviews retain their eight-participant contract.
+
+Reviewing a debrief replaces its top-level summary as well as its groups and selects it as the current planning basis. Optional `summary` provides explicit PO text; omitted summary is derived from reviewed common needs/disagreements/hypotheses. `planning_revision` changes on review/selection. Proposals record that revision and the selected debrief version; `planning_stale` marks earlier proposals and accepting them returns 409. Unreviewed drafts do not replace the selected basis. Completed studies cannot select a different basis.
+
+JSON packages now include the `study` design, questions, criteria, pinned participants, guide and completion reference. Markdown includes the same design and guide alongside transcript, reviewed debriefs, proposal history and evidence. Reusing an existing PRD in another conversation also includes its evidence and previously applied proposals. Manually saved/imported PRDs track recognized current evidence dependencies and list `unresolved_citation_ids`; preserving an unknown external ID does not verify it. Existing dependencies are retained conservatively when editing, so removal of an inline label cannot bypass revocation.
+
+Citation inspection recognizes bracketed UUID IDs and reserved entity prefixes (`INS`, `VOC`, `PROB`, `OPP`, `PDEF`, `REQ`, `NFR`, `SCOPE`, `HYP`, `MET`, `BEN`, `AST`, `TASK`, `UTASK`, `IMP`, `PER`, `FGI`, `DEB`). Explicit versions use `[id] v2` or `expected_versions`; formats such as `[id@v2]` are not supported. It returns occurrence counts, unique IDs, unique verified IDs, version-unchecked counts and per-reference status: `verified`, `version_mismatch`, `retracted`, `requires_review`, `unknown_or_unavailable`. Unknown, private and foreign IDs cannot disclose protected record existence. Retraction status is available only for previously published project insights or withdrawn project VoC. The submitted text is neither persisted nor sent to a model. Counts concern only the submitted text and current project, not actual AXIOM usage, semantic correctness or external transmission.
+
+Moving a feature to another service returns 409 when any project insight or VoC still uses that feature. The entire taxonomy import rolls back. An unused feature can move. Reclassify references explicitly before attempting a move.

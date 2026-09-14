@@ -6,9 +6,11 @@
 
 2026-09-13 추가 구현: 필드별 가중 검색, 승인 후 가상 프로필 활성화, 기존 자산 팩의 프로필 등록, PPTX 텍스트와 DOCX 순서 보존, 운영자 계정 관리, 암호화 백업·복구, 배포 주소 전체 흐름 검사. [명세 대비 구현 결과](docs/IMPLEMENTATION_DELTA_20260913.md)와 [고객 파일럿 운영 절차](docs/PILOT_OPERATIONS.md)를 참고하세요.
 
+2026-09-14 추가 구현: 5단계 FGI 스터디, 모집 버전 고정, 공개 근거를 사용한 가이드 작성·PO 검토, 스터디 완료 및 설계 포함 내보내기, 외부 PRD 인용 검사. 기존 PRD 재사용 시 근거 누락, 검토 요약 불일치, 오래된 제안 채택도 보완했습니다. [이번 구현 범위와 남은 조건](docs/IMPLEMENTATION_DELTA_20260914.md)을 확인하세요.
+
 ## Bedrock으로 바로 실행
 
-Python 3.11 이상 환경에서 아래 설치를 마친 후 다음 명령을 실행하세요. `MODEL_OR_PROFILE_ID`는 실제 계정·리전에서 접근 가능한 모델 또는 추론 프로필 ID로 바꿉니다.
+지원 기준은 Ubuntu/Linux 또는 WSL2의 Python 3.12이며 아래 설치 후 실행합니다. `MODEL_OR_PROFILE_ID`는 실제 계정·리전에서 접근 가능한 모델 또는 추론 프로필 ID로 바꿉니다.
 
 ```bash
 python scripts/start_bedrock.py --region ap-northeast-2 --model-id MODEL_OR_PROFILE_ID --profile YOUR_AWS_PROFILE --data-dir /path/to/new-private-data
@@ -20,10 +22,10 @@ python scripts/start_bedrock.py --region ap-northeast-2 --model-id MODEL_OR_PROF
 
 ## 설치 및 로컬 화면 확인
 
-Python 3.11 이상, 검증 환경은 Python 3.12 / Node 22 이상입니다. 화면은 별도 번들 빌드 없이 서버가 제공합니다.
+검증 기준은 Ubuntu/Linux 또는 WSL2의 Python 3.12 / Node 22입니다. 화면은 별도 번들 빌드 없이 서버가 제공합니다. Windows 네이티브·다른 Python 버전의 전체 지원을 보장하지 않습니다.
 
 ```bash
-git clone --branch feature/research-workflow-v2 https://github.com/sdwoo17/npd-assistant.git
+git clone --branch main https://github.com/sdwoo17/npd-assistant.git
 cd npd-assistant
 python3 -m venv .venv
 source .venv/bin/activate
@@ -32,7 +34,7 @@ python manage.py demo
 python manage.py serve
 ```
 
-Windows 가상 환경 활성화: `.venv\Scripts\Activate.ps1`. 접속 주소: **http://127.0.0.1:8765**.
+Windows에서는 WSL2 터미널에서 위 Linux 절차를 실행합니다. 접속 주소: **http://127.0.0.1:8765**. 실제 파일럿은 [main의 CI](https://github.com/sdwoo17/npd-assistant/actions/workflows/ci.yml?query=branch%3Amain)가 성공한 커밋을 확인하고 40자리 SHA로 고정합니다.
 
 | 역할 | 합성 데모 계정 | 공개 데모 비밀번호 |
 | --- | --- | --- |

@@ -6,6 +6,7 @@ import os
 import secrets
 import shutil
 import sqlite3
+from contextlib import closing
 import tempfile
 from pathlib import Path
 from cryptography.fernet import Fernet, InvalidToken
@@ -89,7 +90,7 @@ def backup(store, destination, passphrase):
         snapshot = Path(tmp) / 'snapshot.sqlite3'
         # SQLite's backup API includes a transactionally consistent view even
         # when the server is running; copying a live .sqlite file is not safe.
-        with store.db() as source, sqlite3.connect(snapshot) as dest:
+        with store.db() as source, closing(sqlite3.connect(snapshot)) as dest:
             source.backup(dest)
         if snapshot.stat().st_size > 50 * 1024 * 1024:
             raise AppError('파일럿 백업 한도는 DB 50MiB입니다. 관리형 백업으로 전환하세요.')

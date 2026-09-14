@@ -306,3 +306,55 @@ test("browser: owner approval activates a deferred persona for PO tagging", asyn
     assert.deepEqual(po.errors, []);
   } finally { await po.ctx.close(); }
 });
+
+test("browser: FGI guide review, completed study export and private citation input on mobile", async () => {
+  const {ctx, page, errors} = await login("po", {width:390, height:844});
+  try {
+    await nav(page, "studies");
+    await page.fill("#study-new-title", "브라우저 합성 FGI");
+    await page.locator("#study-create button").click();
+    const field = key => page.locator('#study-detail [data-field="'+key+'"]');
+    await field("study_objective").fill("소재 리포트 분석");
+    await field("study_questions").fill("판단 근거는 무엇인가요?");
+    await page.getByRole("button", {name:"설계 저장 · 리크루팅으로", exact:true}).click();
+    await page.getByRole("button", {name:"리크루팅 저장 · 가이드로", exact:true}).waitFor();
+    await field("study_criteria").fill("리포트 담당 광고주 · 가상 모집");
+    const first = await field("study_personas").locator("option").first().getAttribute("value");
+    await field("study_personas").selectOption(first);
+    await page.getByRole("button", {name:"리크루팅 저장 · 가이드로", exact:true}).click();
+    await page.getByRole("button", {name:"AI로 가이드 생성", exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('[data-field="guide_text_0"]').value.length>0);
+    assert.equal(await page.getByRole("button", {name:"검토한 가이드로 세션 시작", exact:true}).count(),0);
+    await page.getByRole("button", {name:"가이드 검토·저장", exact:true}).click();
+    await page.getByRole("button", {name:"검토한 가이드로 세션 시작", exact:true}).click();
+    await page.getByRole("button", {name:"세션 열기", exact:true}).click();
+    await ask(page, "소재 리포트 분석 근거는 무엇인가요?");
+    await nav(page, "studies");
+    await page.getByRole("button", {name:"디브리프 생성", exact:true}).click();
+    await field("study_review_summary").fill("실제 고객에게 근거를 추가 확인한다.");
+    await page.getByRole("button", {name:"검토본 확정 · 기획 기준으로 사용", exact:true}).click();
+    await page.getByRole("button", {name:"현재 검토본으로 스터디 완료", exact:true}).click();
+    await page.getByText("검토본을 확정한 완료 스터디입니다.").waitFor();
+    assert.equal(await page.getByRole("button", {name:"세션 열기", exact:true}).count(),0);
+    const downloaded = page.waitForEvent("download");
+    await page.getByRole("button", {name:"Markdown 패키지 내보내기", exact:true}).click();
+    const download = await downloaded;
+    const chunks=[];
+    for await(const chunk of await download.createReadStream()) chunks.push(chunk);
+    const exported=Buffer.concat(chunks).toString("utf8");
+    assert.match(exported,/디브리프 체크리스트/);
+    assert.match(exported,/실제 고객에게 근거를 추가 확인한다/);
+    await nav(page,"prd");
+    await page.fill("#citation-check-text","<script>window.injection=true</script> [INS-ADS-MISSING]");
+    await page.locator("#citation-check-form button").click();
+    await page.getByText("미확인 또는 접근 불가",{exact:true}).waitFor();
+    assert.equal(await page.evaluate(()=>window.injection),undefined);
+    const sizes=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));
+    assert.ok(sizes.scroll<=sizes.width+2,JSON.stringify(sizes));
+    await page.click("#logout");
+    await page.locator("#login-screen").waitFor({state:"visible"});
+    assert.equal(await page.inputValue("#citation-check-text"),"");
+    assert.equal(await page.locator("#study-detail").textContent(),"");
+    assert.deepEqual(errors,[]);
+  } finally { await ctx.close(); }
+});

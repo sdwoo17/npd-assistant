@@ -117,6 +117,7 @@ function lines(value) {
     .filter(Boolean);
 }
 function resetWorkspace() {
+  state.studyId = null;
   state.conversation = null;
   state.evidence = [];
   state.voc = null;
@@ -138,9 +139,12 @@ function resetWorkspace() {
     "debrief-list",
     "prd-list",
     "decision-list",
+    "study-list", "study-detail", "citation-check-result", "persona-archive-list",
   ])
     $(id).replaceChildren();
   $("raw-panel").hidden = true;
+  $("citation-check-text").value = "";
+  $("study-new-title").value = "";
 }
 async function refresh() {
   const [boot, evidence, prds] = await Promise.all([
@@ -236,6 +240,7 @@ async function page(name) {
       "페르소나",
       "관찰 근거와 가정을 구분해 가상 광고주를 정의하세요.",
     ],
+    studies: ["FGI 스터디", "연구 설계·리크루팅·가이드·세션·디브리프를 순서대로 진행하세요."],
     prd: [
       "PRD 변경과 디브리프",
       "대화의 결과를 검토하고 실제 PRD 버전에 반영하세요.",
@@ -246,6 +251,7 @@ async function page(name) {
   if (name === "research") await renderResearch();
   if (name === "voc") await loadVoc();
   if (name === "prd") await renderPlanning();
+  if (name === "studies") await renderStudies();
 }
 async function showEvidence(id) {
   state.evidence = await api("/api/evidence");
@@ -383,6 +389,11 @@ function insertTag(alias) {
   input.focus();
 }
 function renderPersonas() {
+  $("persona-archive-list").replaceChildren(...(state.boot.archived_personas || []).map(p =>
+    button("@" + p.alias + " 풀로 복원", async () => {
+      await api("/api/personas/archive", { persona_id: p.id, expected_version: p.version, archived: false });
+      await refresh();
+    })));
   $("chat-personas").replaceChildren(
     ...state.boot.personas.map((p) =>
       button(
@@ -433,6 +444,10 @@ function renderPersonas() {
       );
       for (const observation of p.observations || [])
         card.append(node("blockquote", observation.quote));
+      card.append(button("프로필 보관 · 기존 대화 유지", async () => {
+        await api("/api/personas/archive", { persona_id: p.id, expected_version: p.version, archived: true });
+        await refresh();
+      }));
       references(card, p.evidence_ids);
       card.append(
         button("이 페르소나 인터뷰하기", async () => {
@@ -830,6 +845,8 @@ async function renderProposals() {
         node("p", "미검증 가정: " + p.assumptions.join(" / ")),
       );
       references(card, p.evidence_ids);
+      if (p.planning_stale && p.state !== "accepted")
+        card.append(node("p", "기획 기준 디브리프가 변경됐습니다. 현재 검토본으로 제안을 다시 생성하세요.", "warning"));
       const form = node("form");
       const editors = [];
       for (const change of p.changes || []) {
@@ -891,7 +908,7 @@ async function renderProposals() {
         trace.append(node("small", e.id + " v" + e.version)),
       );
       card.append(trace);
-      if (p.state !== "accepted")
+      if (p.state !== "accepted" && !p.planning_stale)
         for (const [value, label] of [
           ["accepted", "PRD에 반영할 제안으로 채택"],
           ["held", "보류"],
@@ -919,6 +936,8 @@ async function renderProposals() {
 }
 async function renderDebriefs() {
   const rows = await api("/api/debriefs");
+  const conversations = new Map(await Promise.all([...new Set(rows.map(d => d.conversation_id))].map(async id =>
+    [id, await api("/api/conversations/" + id)])));
   const names = {
     common_needs: "공통 요구",
     disagreements: "의견 차이",
@@ -935,6 +954,18 @@ async function renderDebriefs() {
       );
       const form = node("form"),
         edits = {};
+      const conv = conversations.get(d.conversation_id);
+      const selected = conv.active_debrief?.id === d.id && conv.active_debrief?.version === d.version;
+      card.append(node("p", selected ? "현재 PRD 기획 기준인 검토본" : d.review_status === "po_reviewed" ? "검토 완료 · 참고 검토본" : "검토 전 초안"));
+      if (!selected && d.review_status === "po_reviewed")
+        card.append(button("이 검토본을 기획 기준으로 선택", async () => {
+          await api("/api/debriefs/select", { conversation_id: conv.id, expected_version: conv.version,
+            debrief_id: d.id, debrief_version: d.version });
+          await renderPlanning();
+          notice("기획 기준이 변경됐습니다. 이전 제안은 다시 생성하세요.");
+        }));
+      const summary = field(form, "review_summary", "검토 요약 · 비워 두면 수정한 항목에서 요약", "", "textarea");
+      summary.required = false;
       for (const [key, label] of Object.entries(names)) {
         form.append(node("h4", label));
         edits[key] = d[key].map((item) => {
@@ -955,11 +986,12 @@ async function renderDebriefs() {
         );
         await api("/api/debriefs/update", {
           ...groups,
+          ...(summary.value.trim() ? { summary: summary.value } : {}),
           debrief_id: d.id,
           expected_version: d.version,
         });
-        await renderDebriefs();
-        notice("PO 검토 결과를 저장했습니다.");
+        await renderPlanning();
+        notice("PO 검토 결과를 현재 기획 기준으로 저장했습니다.");
       });
       card.append(form);
       return card;
@@ -1016,6 +1048,24 @@ function renderPrds() {
     }),
   );
 }
+
+$("citation-check-form").onsubmit = guard(async () => {
+  const result = await api("/api/citations/verify", { text: $("citation-check-text").value });
+  const target = $("citation-check-result");
+  target.replaceChildren(node("p", `인용 ${result.total_citations}회 · 서로 다른 근거 ${result.unique_citations}개 · 유효 근거 ${result.verified_unique}개`),
+    node("p", result.disclosure), node("small", `버전이 명시되지 않은 유효 인용: ${result.version_unchecked}회`));
+  const labels = { verified: "유효", retracted: "공개 철회", requires_review: "재확인 필요",
+    version_mismatch: "버전 불일치", unknown_or_unavailable: "미확인 또는 접근 불가" };
+  const table = node("table"), header = node("tr");
+  ["근거 ID", "상태", "인용 횟수", "현재 버전"].forEach(t => header.append(node("th", t)));
+  table.append(header);
+  result.references.forEach(r => {
+    const row = node("tr");
+    [r.id, labels[r.status], r.occurrences, r.current_version ?? "—"].forEach(t => row.append(node("td", t)));
+    table.append(row);
+  });
+  target.append(table);
+});
 async function fileBody(input) {
   const file = input.files[0];
   if (!file) throw new Error("파일을 선택하세요.");
@@ -1356,6 +1406,170 @@ $("prd-import").onsubmit = guard(async () => {
   await renderPlanning();
   notice("기준 PRD를 가져왔습니다.");
 });
+const studyStageNames = { design: "설계", recruitment: "리크루팅", guide: "모더레이션 가이드", session: "세션", debrief: "디브리프" };
+
+$("study-create").onsubmit = guard(async () => {
+  const row = await api("/api/studies", { title: $("study-new-title").value });
+  state.studyId = row.id;
+  $("study-new-title").value = "";
+  await renderStudies();
+});
+
+async function renderStudies() {
+  await refresh();
+  const data = await api("/api/studies");
+  $("study-list").replaceChildren(node("p", `페르소나 풀 ${state.boot.personas.length}/${data.persona_pool_limit}명 · 스터디 참여자는 최대 ${data.participant_limit}명`),
+    ...data.studies.map(r => r.redacted ? node("p", r.text, "warning") : button(
+      r.title + " · " + (r.status === "completed" ? "완료" : studyStageNames[r.stage]), async () => {
+        state.studyId = r.id;
+        await renderStudies();
+      })));
+  const row = data.studies.find(r => r.id === state.studyId && !r.redacted);
+  const target = $("study-detail");
+  target.replaceChildren();
+  if (!row) return;
+  target.append(node("h2", row.title));
+  const steps = node("ol", null, "study-steps");
+  Object.entries(studyStageNames).forEach(([key, name]) => {
+    const item = node("li", name, key === row.stage ? "current" : "");
+    if (key === row.stage) item.setAttribute("aria-current", "step");
+    steps.append(item);
+  });
+  target.append(steps, node("p", row.status === "completed" ? "검토본을 확정한 완료 스터디입니다." : "가상 반응을 실제 고객의 조사 결과로 해석하지 마세요."));
+  if (!row.conversation_id) {
+    const form = node("form", null, "panel");
+    const title = field(form, "study_title", "스터디 제목", row.title);
+    const objective = field(form, "study_objective", "연구 목적", row.objective, "textarea");
+    const questions = field(form, "study_questions", "연구 질문 · 줄마다 하나", row.research_questions, "textarea");
+    const criteria = field(form, "study_criteria", "리크루팅 기준", row.recruitment_criteria, "textarea");
+    const people = field(form, "study_personas", "참여자 선택 · 최대 6명", "", "select");
+    people.multiple = true;
+    people.size = Math.min(6, Math.max(2, state.boot.personas.length));
+    state.boot.personas.forEach(p => {
+      const option = node("option", p.name + " · " + p.segment);
+      option.value = p.id;
+      option.selected = row.persona_ids.includes(p.id);
+      people.append(option);
+    });
+    const prd = field(form, "study_prd", "기준 PRD", "", "select");
+    fillSelect(prd, [["", "새 PRD 만들기"], ...state.prds.filter(p => !p.redacted).map(p => [p.id, p.title])], row.target_prd_id);
+    const next = row.stage === "design" ? "recruitment" : "guide";
+    saveButton(form, row.stage === "design" ? "설계 저장 · 리크루팅으로" : row.stage === "recruitment" ? "리크루팅 저장 · 가이드로" : "설계 변경 저장 · 가이드 재검토");
+    form.onsubmit = guard(async () => {
+      await api("/api/studies/update", { study_id: row.id, expected_version: row.version, stage: next,
+        title: title.value, objective: objective.value, research_questions: lines(questions.value),
+        recruitment_criteria: criteria.value, persona_ids: [...people.selectedOptions].map(o => o.value), target_prd_id: prd.value });
+      await renderStudies();
+    });
+    target.append(form);
+  } else {
+    const design = node("details");
+    design.append(node("summary", "확정한 연구 설계"), node("p", row.objective), node("p", "리크루팅 기준: " + row.recruitment_criteria));
+    row.research_questions.forEach(q => design.append(node("p", q)));
+    row.participants.forEach(p => design.append(node("small", "참여자 " + p.id + " v" + p.version)));
+    target.append(design);
+  }
+  if (row.stage === "guide" && !row.conversation_id) {
+    const panel = node("section", null, "panel");
+    panel.append(node("h3", "모더레이션 가이드"), node("p", "AI 초안을 검토하거나 직접 작성한 뒤 저장하세요."),
+      button("AI로 가이드 생성", async () => {
+        await api("/api/studies/guide", { study_id: row.id, expected_version: row.version });
+        await renderStudies();
+      }));
+    const form = node("form");
+    const fields = data.guide_sections.map((title, i) => {
+      const section = row.guide?.sections[i];
+      const content = field(form, "guide_text_" + i, title, section?.text || "", "textarea");
+      const ids = field(form, "guide_evidence_" + i, "근거 ID · 줄마다 하나, 사실 주장에 연결", section?.evidence_ids || [], "textarea");
+      content.required = true;
+      if (section) references(form, section.evidence_ids);
+      return { title, content, ids };
+    });
+    saveButton(form, "가이드 검토·저장");
+    form.onsubmit = guard(async () => {
+      await api("/api/studies/guide", { study_id: row.id, expected_version: row.version,
+        sections: fields.map(s => ({ title: s.title, text: s.content.value, evidence_ids: lines(s.ids.value) })),
+        assumptions: row.guide?.assumptions || [] });
+      await renderStudies();
+    });
+    panel.append(form);
+    if (row.guide?.authorship === "po_reviewed") panel.append(button("검토한 가이드로 세션 시작", async () => {
+      await api("/api/studies/start", { study_id: row.id, expected_version: row.version });
+      await renderStudies();
+    }, "primary"));
+    target.append(panel);
+  }
+  if (!row.conversation_id) return;
+  const conversation = await api("/api/conversations/" + row.conversation_id);
+  const guide = node("details");
+  guide.append(node("summary", "모더레이션 가이드 보기"));
+  row.guide.sections.forEach(s => { guide.append(node("h4", s.title), node("p", s.text)); references(guide, s.evidence_ids); });
+  target.append(guide);
+  if (row.status !== "completed") {
+    row.research_questions.forEach(q => target.append(button("질문: " + q, async () => {
+      await openConversation(row.conversation_id);
+      await page("chat");
+      $("message-input").value = q;
+      $("message-input").focus();
+    })));
+    target.append(button("세션 열기", async () => { await openConversation(row.conversation_id); await page("chat"); }));
+  }
+  const transcript = node("details");
+  transcript.append(node("summary", "저장된 세션 발언 " + conversation.messages.length + "개"));
+  conversation.messages.forEach(m => {
+    transcript.append(node("h4", m.speaker), node("p", m.text));
+    references(transcript, m.evidence_ids || []);
+  });
+  target.append(transcript);
+  if (conversation.messages.some(m => m.evidence_ids?.length) && row.status !== "completed")
+    target.append(button("디브리프 생성", async () => {
+      await api("/api/debriefs", { conversation_id: row.conversation_id });
+      await renderStudies();
+    }));
+  const reviews = (await api("/api/debriefs")).filter(d => d.conversation_id === row.conversation_id);
+  const current = reviews.find(d => d.id === conversation.active_debrief?.id && d.version === conversation.active_debrief?.version);
+  const draft = reviews.filter(d => d.review_status !== "po_reviewed").at(-1);
+  const review = row.status === "completed" ? current : (draft || current);
+  if (review) {
+    const panel = node("section", null, "panel");
+    panel.append(node("h3", "디브리프 검토 · v" + review.version), node("p", review.text));
+    if (row.status !== "completed") {
+      const form = node("form");
+      const summary = field(form, "study_review_summary", "검토 요약 · 비워 두면 수정한 항목에서 요약", "", "textarea");
+      const groupNames = { common_needs: "공통 요구", disagreements: "의견 차이", hypotheses: "가설", unsupported_claims: "근거 부족", followup_questions: "실제 고객 확인 질문" };
+      const groups = Object.fromEntries(Object.entries(groupNames).map(([key, label]) => [key, review[key].map(item => {
+        const input = field(form, "study_review_" + key, label, item.text, "textarea");
+        references(form, item.evidence_ids);
+        return { item, input };
+      })]));
+      saveButton(form, "검토본 확정 · 기획 기준으로 사용");
+      form.onsubmit = guard(async () => {
+        await api("/api/debriefs/update", { debrief_id: review.id, expected_version: review.version,
+          ...Object.fromEntries(Object.entries(groups).map(([key, rows]) => [key, rows.map(({item, input}) => ({...item, text: input.value}))])),
+          ...(summary.value.trim() ? {summary: summary.value} : {}) });
+        await renderStudies();
+      });
+      panel.append(form);
+    }
+    target.append(panel);
+  }
+  if (current && row.status !== "completed") target.append(button("현재 검토본으로 스터디 완료", async () => {
+    await api("/api/studies/complete", { study_id: row.id, expected_version: row.version,
+      debrief_id: current.id, debrief_version: current.version });
+    await renderStudies();
+  }, "primary"));
+  if (current) target.append(button("검토본으로 PRD 변경 제안 생성", async () => {
+    await api("/api/proposals", { conversation_id: row.conversation_id });
+    await page("prd");
+  }));
+  for (const [format, label] of [["markdown", "Markdown 패키지"], ["json", "JSON 패키지"]])
+    target.append(button(label + " 내보내기", async () => {
+      await openConversation(row.conversation_id);
+      $("export-format").value = format;
+      await $("export-chat").onclick();
+    }));
+}
+
 async function boot() {
   await refresh();
   $("login-screen").hidden = true;

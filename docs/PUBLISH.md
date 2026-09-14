@@ -2,10 +2,10 @@
 
 대상 저장소: https://github.com/sdwoo17/npd-assistant
 
-0.2 변경은 `main`의 `946a2a1`에서 분기한 `feature/research-workflow-v2`에 게시하고 PR에서 검토한다. 기존 브랜치의 다른 변경을 덮어쓰거나 force push하지 않는다. 최신 실행 결과는 해당 PR/커밋의 GitHub Actions에서 확인한다.
+설치는 `main`을 기준으로 한다. 변경은 최신 main에서 `codex/` 작업 브랜치를 만들어 PR로 검토한다. 기존 브랜치의 다른 변경을 덮어쓰거나 force push하지 않는다. 실제 배포에는 해당 커밋의 GitHub Actions 성공을 확인한 40자리 SHA를 사용한다. 실행 환경은 README의 Linux/WSL2·Python 3.12·Node 22 기준을 따른다.
 
 ```bash
-git clone --branch feature/research-workflow-v2 https://github.com/sdwoo17/npd-assistant.git
+git clone --branch main https://github.com/sdwoo17/npd-assistant.git
 cd npd-assistant
 python -m venv .venv
 ```
