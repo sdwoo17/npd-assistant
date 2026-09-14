@@ -1590,14 +1590,14 @@ async function renderStudies() {
 
 async function boot() {
   await refresh();
-  $("login-screen").hidden = true;
-  $("workspace").hidden = false;
   if (state.boot.conversations.length)
     await openConversation(
       state.conversation?.id || state.boot.conversations[0].id,
     );
   else renderMessages();
   await page("chat");
+  $("login-screen").hidden = true;
+  $("workspace").hidden = false;
 }
 boot().catch(() => {
   $("login-screen").hidden = false;

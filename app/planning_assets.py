@@ -8,8 +8,9 @@ import uuid
 from pathlib import Path
 from .contracts import text, optional, revision, strings
 from .ingest import decode_file
-from .story_contracts import IMAGE_LIMIT, IMAGE_PIXELS, IMAGE_EDGE, objects, rect
+from .story_contracts import IMAGE_LIMIT, IMAGE_PIXELS, IMAGE_EDGE, objects
 from .store import AppError
+from .planning_regions import PlanningRegions, image_view, validated_regions
 
 
 def decode_image(body):
@@ -45,7 +46,7 @@ def decode_image(body):
         raise AppError('손상되었거나 지원하지 않는 이미지입니다. PNG/JPEG로 다시 저장하세요.')
 
 
-class PlanningAssets:
+class PlanningAssets(PlanningRegions):
     def planning_actor(self, user):
         # Long model operations must not persist after session/project access changes.
         if not user.get('csrf'):
@@ -100,6 +101,8 @@ class PlanningAssets:
         if purpose not in ('story_sketch', 'existing_service', 'actual_fgi', 'internal_voc'):
             raise AppError('기획 자료의 용도를 확인하세요.')
         old = self.asset(user, body['asset_id']) if body.get('asset_id') else None
+        if old and purpose != old['purpose']:
+            raise AppError('원본의 용도를 변경하려면 별도 자료로 업로드하세요.')
         duplicate = next((r for r in self.store.list(p, 'planning_asset') if r['hash'] == digest and r['purpose'] == purpose and not r.get('withdrawn')), None)
         if duplicate and not old:
             return {**self.asset_metadata(duplicate), 'duplicate': True, 'analysis_started': False}
@@ -133,8 +136,16 @@ class PlanningAssets:
             raise
         return {**self.asset_metadata(saved), 'duplicate': False, 'analysis_started': False}
 
-    def planning_asset_raw(self, user, rid):
+    def planning_asset_raw(self, user, rid, version=None):
         row = self.asset(user, rid)
+        if version is not None:
+            try:
+                number = int(version)
+            except (ValueError, TypeError):
+                raise AppError('원본 버전을 확인하세요.')
+            row = next((r for r in self.store.history(user['project_id'], 'planning_asset', rid) if r['version'] == number), None)
+            if not row:
+                raise AppError('기획 원본 버전을 찾을 수 없습니다.', 404)
         self.audit(user, 'planning_asset_viewed', rid)
         result = {'id': rid, 'version': row['version'], 'media_type': row['media_type'], 'image': row['image']}
         if row['media_type'] == 'image':
@@ -153,31 +164,25 @@ class PlanningAssets:
         epoch = self.store.epoch(p)
         asset = self.asset(user, text(body, 'asset_id', 80), revision(body))
         prompt = text(body, 'prompt', 5000)
+        view = None
+        if asset['media_type'] == 'image':
+            image_bytes, view = image_view(base64.b64decode(self.store.decrypt(asset['encrypted_preview'])), body)
+        elif 'crop' in body or body.get('rotation', 0):
+            raise AppError('영역 선택과 회전은 이미지에서 사용할 수 있습니다.')
         run = self.store.put(p, 'extraction_run', {'asset_id': asset['id'], 'asset_version': asset['version'],
-            'status': 'running', 'prompt': prompt, 'prompt_version': 'planning-image-v1', 'model': self.model.model if asset['media_type']=='image' else None,
-            'created_by': user['id'], 'dependencies': [], 'error': ''})
+            'status': 'running', 'prompt': prompt, 'prompt_version': 'planning-image-v2', 'model': self.model.model if asset['media_type']=='image' else None,
+            'created_by': user['id'], 'dependencies': [], 'error': '', 'view': view})
         try:
             if asset['media_type'] == 'image':
                 result = self.generate('planning_image', {'prompt': prompt, 'asset_id': asset['id'],
-                    'image': asset['image'], 'source_is': 'untrusted planning intention; not customer evidence'},
-                    images=[{'format': 'jpeg', 'bytes': base64.b64decode(self.store.decrypt(asset['encrypted_preview']))}])
+                    'image': view, 'original_image': asset['image'], 'source_is': 'untrusted planning intention; not customer evidence'},
+                    images=[{'format': 'jpeg', 'bytes': image_bytes}])
             else:
                 content = self.store.decrypt(asset['encrypted_text'])
                 result = {'transcript': content, 'quality_issues': [], 'regions': [{'id':'document', 'bbox':[0,0,1,1],
                     'text':content, 'kind':'text'}], 'relations':[], 'questions':[]}
             transcript = optional(result, 'transcript', 150000)
-            regions, ids = [], set()
-            for item in objects(result['regions'], 100, '원본 영역'):
-                rid = text(item, 'id', 80)
-                if rid in ids:
-                    raise AppError('원본 영역 ID가 중복됐습니다.', 502)
-                ids.add(rid)
-                regions.append({'id':rid, 'bbox':rect(item['bbox']), 'text':optional(item,'text',150000), 'kind':item['kind']})
-            relations = []
-            for item in objects(result['relations'], 200, '영역 관계'):
-                if item['from_region'] not in ids or item['to_region'] not in ids:
-                    raise AppError('영역 관계가 원본 영역과 맞지 않습니다.', 502)
-                relations.append(item)
+            regions, relations = validated_regions(result['regions'], result['relations'], view)
             if not transcript.strip() and not regions:
                 raise AppError('읽을 수 있는 내용이 없습니다. 사진 또는 텍스트를 보충하세요.', 422)
             self.planning_actor(user)

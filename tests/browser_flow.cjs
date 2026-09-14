@@ -439,6 +439,7 @@ test("browser: image analysis creates review questions and links extracted field
     await page.locator('#draft-prompt-form button[type="submit"]').click();
     await page.locator("#draft-prompt-dialog").waitFor({state:"hidden"});
     await page.getByRole("button",{name:"r1 · text · 광고주",exact:true}).waitFor();
+    await page.getByRole("button",{name:"이 분석을 스토리 입력에 추가",exact:true}).click();
     await page.getByRole("button",{name:"AI초안작성 · 새 후보/재분석",exact:true}).click();
     await page.fill("#draft-prompt","소재 운영자 관점으로 제안");
     await page.locator('#draft-prompt-form button[type="submit"]').click();
@@ -452,4 +453,82 @@ test("browser: image analysis creates review questions and links extracted field
     await page.screenshot({path:"test-results/stage2-image.png",fullPage:true});
     assert.deepEqual(errors,[]);
   } finally {await ctx.close();}
+});
+
+async function planningPost(page, path, action){
+  const done=page.waitForResponse(r=>r.url().endsWith(path)&&r.request().method()==="POST");
+  await action();const response=await done;assert.equal(response.status(),201,await response.text());return response.json();
+}
+async function planningIntent(page,label,intent,path){
+  await page.getByRole("button",{name:label,exact:true}).click();await page.fill("#draft-prompt",intent);
+  const result=await planningPost(page,path,()=>page.locator('#draft-prompt-form button[type="submit"]').click());
+  await page.locator("#draft-prompt-dialog").waitFor({state:"hidden"});return result;
+}
+async function planningImage(page,title,color){
+  const data=await page.evaluate(color=>{const c=document.createElement("canvas");c.width=80;c.height=40;const g=c.getContext("2d");g.fillStyle=color;g.fillRect(0,0,80,40);return c.toDataURL("image/png").split(",")[1];},color);
+  await page.locator('[name="asset-title"]').fill(title);
+  await page.setInputFiles('[name="asset-file"]',{name:"synthetic-"+color+".png",mimeType:"image/png",buffer:Buffer.from(data,"base64")});
+  return planningPost(page,"/api/planning-assets",()=>page.getByRole("button",{name:"기획 자료 업로드",exact:true}).click());
+}
+test("browser: selected crop, immutable region edits and explicit image ordering reach story generation",async()=>{
+  const {ctx,page,errors}=await login("po");
+  try {
+    await page.click('[data-stage="definition"]');await page.getByRole("button",{name:"2.2 사용자스토리정의",exact:true}).click();
+    await planningImage(page,"합성 빨간 원본","red");
+    await page.waitForFunction(()=>document.querySelector('.source-scroll canvas')?.width===80);
+    await page.getByRole("button",{name:"분석 영역 드래그 선택",exact:true}).click();
+    const canvasBox=await page.locator('.source-scroll canvas').boundingBox();
+    await page.mouse.move(canvasBox.x+canvasBox.width*.25,canvasBox.y+canvasBox.height*.25);await page.mouse.down();
+    await page.mouse.move(canvasBox.x+canvasBox.width*.75,canvasBox.y+canvasBox.height*.75);await page.mouse.up();
+    assert.equal(await page.locator('[name="crop-x"]').inputValue(),"0.25");assert.equal(await page.locator('[name="crop-width"]').inputValue(),"0.5");
+    for(const [key,value] of [["x","0.25"],["y","0.25"],["width","0.5"],["height","0.5"]])await page.locator('[name="crop-'+key+'"]').fill(value);
+    await page.getByRole("button",{name:"분석 영역 좌표 적용",exact:true}).click();
+    await page.getByRole("button",{name:"원본 회전 90°",exact:true}).click();
+    const original=await planningIntent(page,"원본 분석 · AI초안작성","선택 영역 분석","/api/planning-assets/extract");
+    assert.deepEqual(original.view.crop,[.25,.25,.5,.5]);assert.equal(original.view.rotation,90);assert.deepEqual(original.regions[0].bbox,[.25,.5,.25,.25]);
+    const regionEditor=page.locator('details').filter({has:page.locator('summary').filter({hasText:/^영역·전사 직접 편집$/})});
+    await regionEditor.locator("summary").first().click();
+    await regionEditor.locator('[name="coords"]').fill("0.1,0.2,0.3,0.4");
+    await page.locator('[name="region-note"]').fill("PO가 글자 경계를 직접 검토");
+    const edited=await planningPost(page,"/api/planning-assets/regions",()=>page.getByRole("button",{name:"새 영역 검토본 저장",exact:true}).click());
+    assert.notEqual(edited.id,original.id);assert.deepEqual(edited.regions[0].bbox,[.1,.2,.3,.4]);
+    await page.getByRole("button",{name:"이 분석을 스토리 입력에 추가",exact:true}).click();
+    await planningImage(page,"합성 파란 원본","blue");
+    const second=await planningIntent(page,"원본 분석 · AI초안작성","두 번째 원본 분석","/api/planning-assets/extract");
+    await page.getByRole("button",{name:"이 분석을 스토리 입력에 추가",exact:true}).click();
+    await page.locator('.analysis-order-entry').last().getByRole("button",{name:"입력 위로",exact:true}).click();
+    assert.deepEqual(await page.locator('.analysis-order-entry').evaluateAll(rows=>rows.map(r=>r.dataset.extractionId)),[second.id,edited.id]);
+    const draft=await planningIntent(page,"AI초안작성 · 새 후보/재분석","합성 파란 원본 우선 비교","/api/story-drafts");
+    assert.deepEqual(draft.extraction_ids,[second.id,edited.id]);assert.equal(draft.stories[0].provenance.actor.asset_id,second.asset_id);
+    await page.screenshot({path:"test-results/stage2-source-order.png",fullPage:true});assert.deepEqual(errors,[]);
+  } catch(error){console.error("Planning failure notice:",await page.locator("#notice").textContent());await page.screenshot({path:"test-results/planning-failure-"+Date.now()+".png",fullPage:true});throw error;} finally {await ctx.close();}
+});
+test("browser: original replacement opens explicit recovery preserving PO edits and historical source",async()=>{
+  const {ctx,page,errors}=await login("po");
+  try {
+    await page.click('[data-stage="definition"]');await page.getByRole("button",{name:"2.2 사용자스토리정의",exact:true}).click();
+    const asset=await planningImage(page,"합성 교체 대상 원본","green");
+    const run=await planningIntent(page,"원본 분석 · AI초안작성","교체 전 분석","/api/planning-assets/extract");
+    await page.getByRole("button",{name:"이 분석을 스토리 입력에 추가",exact:true}).click();
+    const draft=await planningIntent(page,"AI초안작성 · 새 후보/재분석","교체 전 스토리 합성","/api/story-drafts");
+    const candidate=page.locator('.planning-review details').filter({hasText:"교체 전 스토리 합성"}).last();await candidate.locator("summary").click();
+    const story=await planningPost(page,"/api/story-drafts/apply",()=>candidate.getByRole("button",{name:"새 스토리 초안으로 채택",exact:true}).click());
+    await page.locator('[name="value"]').fill("보존할 PO 수정 가치");
+    const poEdit=await planningPost(page,"/api/stories/update",()=>page.getByRole("button",{name:"초안 저장",exact:true}).click());
+    await page.locator('[name="planning-source"]').selectOption(asset.id);
+    await page.getByText("원본 교체 · 이전 버전 보존",{exact:true}).click();
+    await page.setInputFiles('[name="revision-file"]',{name:"synthetic-revision.md",mimeType:"text/markdown",buffer:Buffer.from("변경된 원본: 자동 변경을 허용하지 않음")});
+    await planningPost(page,"/api/planning-assets",()=>page.getByRole("button",{name:"원본 새 버전 저장",exact:true}).click());
+    await page.getByRole("button",{name:"재검토 필요 · "+story.id.slice(0,12),exact:true}).click();
+    await page.getByRole("button",{name:"이전·현재 원본 비교",exact:true}).click();
+    await page.getByText("변경된 원본: 자동 변경을 허용하지 않음",{exact:true}).waitFor();
+    await page.locator('[name="source-review-note"]').fill("이전 그림과 현재 변경 조건을 비교");await page.locator('[name="source-review-ack"]').check();
+    const recovered=await planningPost(page,"/api/stories/recover",()=>page.getByRole("button",{name:"PO 편집을 유지한 재검토 초안 저장",exact:true}).click());
+    assert.equal(recovered.id,story.id);assert.equal(recovered.version,poEdit.version+1);assert.equal(recovered.definition_status,"draft");
+    assert.equal(await page.locator('[name="value"]').inputValue(),"보존할 PO 수정 가치");assert.equal(recovered.source_refs.find(r=>r.id===asset.id).version,2);
+    assert.equal(recovered.provenance.actor.asset_version,1);assert.equal(recovered.provenance.actor.historical_source,true);assert.equal(recovered.provenance.actor.extraction_id,run.id);
+    assert.ok(recovered.questions.some(q=>q.critical&&q.status==="unanswered"&&q.id.startsWith("source-review-")));
+    await page.getByRole("button",{name:"원본 추출 · 원본 영역 보기",exact:true}).click();await page.locator('canvas[aria-label="이전 원본 v1"]').waitFor();
+    await page.screenshot({path:"test-results/stage2-source-recovery.png",fullPage:true});assert.deepEqual(errors,[]);
+  } catch(error){console.error("Planning failure notice:",await page.locator("#notice").textContent());await page.screenshot({path:"test-results/planning-failure-"+Date.now()+".png",fullPage:true});throw error;} finally {await ctx.close();}
 });

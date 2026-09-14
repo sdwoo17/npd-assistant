@@ -15,6 +15,15 @@ This change builds on PR #4. It does **not** certify 100% completion of the enti
 - Explicit `npd.story-package.v1` and `npd.definition-package.v1` exports carry selected IDs/versions, conditions and review state while excluding original file bytes, whole transcripts and provenance quotes. These are proposed interchange formats, not an AXIOM compatibility claim.
 - Desktop source/editor/review panes, mobile tabs, source highlighting, zoom/rotation, field comparison, history export and a journey/release story map are wired to the API. Navigation waits for data before revealing editable panels so late navigation responses cannot erase input.
 
+## September 15 continuation
+
+- Select a rectangle by dragging or entering normalized coordinates; apply 0/90/180/270-degree rotation before model analysis. Only the selected image pixels reach the image provider. Returned region coordinates are transformed back to the preserved EXIF-oriented original.
+- Edit region bounds, transcription and relationships in a new immutable extraction record. Previous text/bounds and ambiguity questions are preserved. Generated field provenance pins the exact extraction ID and original-coordinate rectangle.
+- Explicitly choose and order up to three analyzed originals. The server preserves order and rejects duplicate runs or multiple runs for the same original. Nothing is implicitly selected from recent uploads.
+- Replace an original using version checks, compare previous/current files, and create a new story draft that retains PO fields and prior confirmed history. Recovery requires a reviewed snapshot, acknowledgment and a note; concurrent edits/revisions and revoked evidence are rejected. Historical provenance is labeled as historical, and a new critical review question blocks immediate confirmation. Actual validation is downgraded to planned after recovery.
+
+Further implementation details and limits: [Source review continuation](planning-source-review-2026-09-15.md).
+
 ## Server configuration
 
 Existing model configuration remains unchanged. Image interpretation requires a Bedrock model supporting Converse images; another configured text adapter returns a clear capability error. Missing credentials never produce canned results.
@@ -24,7 +33,7 @@ Existing model configuration remains unchanged. Image interpretation requires a 
 
 Provider contracts: [Bedrock Converse](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html), [ImageBlock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ImageBlock.html), [Brave web search](https://api-dashboard.search.brave.com/api-reference/web/search/get).
 
-## Validation recorded before CI
+## Earlier validation checkpoint (before the September 15 continuation)
 
 - New backend regression suite: 23 tests passed with synthetic fixtures and mocked external services.
 - DOM + local HTTP regression: 5 tests passed.
@@ -37,8 +46,8 @@ Provider contracts: [Bedrock Converse](https://docs.aws.amazon.com/bedrock/lates
 
 - Live Bedrock/Korean handwriting quality, AWS/S3 permissions and deployment, Brave results and AXIOM receiving-system/schema compatibility are unverified. Synthetic tests do not establish model accuracy or production readiness.
 - The top-level prototype and UAT labels are present, with explicit implementation status. This repository still lacks a full prototype generator/deployer and UAT execution/feedback application; the attachments do not provide executable integration contracts for those stages.
-- Image region bounds are displayed and linked, but a PO-drawn crop/region editor, image ordering controls, multi-page/scanned-PDF OCR and collaborative approvals are not complete.
-- Source revisions currently invalidate dependent designs conservatively. History is retained, but a guided recovery/diff workflow after a source revision still needs acceptance work; withdrawn evidence remains inaccessible.
+- PO crop selection, region/transcript revisions and explicit image ordering are implemented. Multi-page/scanned-PDF OCR and collaborative approvals remain incomplete.
+- Direct planning-original revisions have an explicit before/after comparison and story recovery flow that preserves PO edits/history and reopens critical review questions. Recovery through stale research/definition documents is not implemented: those references remain blocked. Withdrawn evidence stays inaccessible. Product-definition changes, including the first definition for manually authored stories, still need a complete guided impact-review workflow.
 - Story map supports journey/release grouping, with edits in the story form. Drag/drop ordering and bulk map edits are not implemented.
 - External web research currently compares search snippets. Whole-page acquisition and a comprehensive search/evaluation workflow are not implemented.
 - Full requirement-by-requirement UAT by the Coupang Ads PO and production rollout have not been performed. Do not describe this branch as 100% complete.

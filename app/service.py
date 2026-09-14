@@ -259,7 +259,7 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, Plannin
         if path == "/api/planning-assets":
             return self.planning_assets(user)
         if path.startswith("/api/planning-assets/raw/"):
-            return self.planning_asset_raw(user, path.rsplit("/", 1)[-1])
+            return self.planning_asset_raw(user, path.rsplit("/", 1)[-1], query.get("version"))
         if path == "/api/planning-extractions":
             return self.planning_extractions(user)
         if path.startswith("/api/planning-extractions/"):
@@ -328,6 +328,8 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, Plannin
             "/api/service-analysis": self.analyze_existing_service, "/api/public-research": self.public_research, "/api/public-research/analyze": self.analyze_public_research,
             "/api/planning-assets": self.upload_planning_asset, "/api/planning-assets/upload": self.upload_planning_asset, "/api/planning-assets/withdraw": self.withdraw_planning_asset,
             "/api/planning-assets/extract": self.extract_planning_asset,
+            "/api/planning-assets/regions": self.edit_planning_regions,
+            "/api/stories/recovery-preview": self.preview_story_recovery, "/api/stories/recover": self.recover_story_sources,
             "/api/stories": self.save_story, "/api/stories/update": self.save_story,
             "/api/stories/review": self.review_story, "/api/stories/validation": self.story_validation,
             "/api/story-drafts": self.generate_stories, "/api/story-drafts/apply": self.apply_story_draft,

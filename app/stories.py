@@ -5,6 +5,7 @@ import uuid
 from .contracts import text, optional, strings, revision, dependency_map, validate_citations
 from .story_contracts import STORY_FIELDS, objects, story_fields
 from .store import AppError, timestamp
+from .story_recovery import StoryRecovery
 
 
 def lineage(records):
@@ -15,7 +16,7 @@ def lineage(records):
     return list({(d['kind'],d['id'],d['version']):d for d in deps}.values())
 
 
-class Stories:
+class Stories(StoryRecovery):
     def story(self, user, rid, version=None):
         if version is None:
             row = self.store.get(user['project_id'], 'user_story', rid)
@@ -71,6 +72,10 @@ class Stories:
             raise AppError('확정·검증 상태와 출처는 전용 동작으로 변경하세요.')
         data={**(old or {}),**body}
         fields=story_fields(data)
+        if old and old.get('source_review'):
+            required = 'source-review-' + old['source_review']['id']
+            if not any(q['id'] == required and q['critical'] for q in fields['questions']):
+                raise AppError('원본 변경 확인 질문은 삭제할 수 없습니다. 답변하거나 사유와 함께 제외하세요.', 409)
         records, links=self.story_inputs(user,data)
         provenance=copy.deepcopy(old.get('provenance',{}) if old else {})
         for key in STORY_FIELDS + ('scenarios','acceptance_criteria','questions','assumptions','mvp','new_problem'):
@@ -101,6 +106,8 @@ class Stories:
         if status in ('held','excluded') and not reason:
             raise AppError('보류 또는 범위 제외 사유를 기록하세요.')
         if status=='confirmed':
+            if row.get('source_review') and not any(q['id'] == 'source-review-' + row['source_review']['id'] and q['critical'] and q['status'] in ('answered', 'excluded') and q['answer'] for q in row['questions']):
+                raise AppError('원본 변경 확인 질문의 답변 또는 제외 사유가 필요합니다.', 409)
             if not row['actor'] or not row['action'] or not row['value'] or not row['acceptance_criteria']:
                 raise AppError('사용자·행동·가치와 수용 기준을 검토하세요.',409)
             if any(q['critical'] and q['status'] not in ('answered','excluded') for q in row['questions']):
@@ -143,7 +150,11 @@ class Stories:
         p=user['project_id']; epoch=self.store.epoch(p)
         prompt=text(body,'prompt',5000)
         run_ids=strings(body.get('extraction_ids',[]),3,80)
+        if len(run_ids) != len(body.get('extraction_ids', [])):
+            raise AppError('분석 입력을 중복 없이 선택하세요.')
         runs=[self.extraction(user,rid) for rid in run_ids]
+        if len({r['asset_id'] for r in runs}) != len(runs):
+            raise AppError('한 원본에서 사용할 분석은 하나만 선택하세요.')
         if any(r['status']!='completed' for r in runs):
             raise AppError('완료한 원본 분석을 선택하세요.',409)
         base=self.story(user,body['base_story_id']) if body.get('base_story_id') else None
@@ -190,7 +201,7 @@ class Stories:
                     region=next((r for r in run['regions'] if r['id']==ref['region_id']),None) if run else None
                     if not region or not ref['quote'] or ref['quote'] not in region['text']:
                         raise AppError('추출 필드가 원본 전사·영역과 일치하지 않습니다.',502)
-                    provenance[ref['field']]={**ref,'asset_version':run['asset_version'],'original_value':fields[ref['field']]}
+                    provenance[ref['field']]={**ref,'asset_version':run['asset_version'],'extraction_id':run['id'],'bbox':region['bbox'],'original_value':fields[ref['field']]}
             fields.update(provenance=provenance,evidence_ids=ids)
             validate_citations(json.dumps(fields,ensure_ascii=False),{r['id'] for r in records})
             candidates.append(fields)
@@ -227,6 +238,9 @@ class Stories:
             provenance=copy.deepcopy(base['provenance'])
             for key in chosen:
                 fields[key]=candidate[key];provenance[key]=candidate['provenance'][key]
+            if base.get('source_review'):
+                required = 'source-review-' + base['source_review']['id']
+                fields['questions'] = [q for q in fields['questions'] if q['id'] != required] + [copy.deepcopy(q) for q in base['questions'] if q['id'] == required]
             for question in candidate['questions']:
                 if question['critical'] and question['text'] not in {q['text'] for q in fields['questions']}:
                     fields['questions'].append(question)
