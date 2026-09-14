@@ -102,7 +102,15 @@ test('browser: image → candidate → source comparison → PO approval → req
     await page.reload(); await page.locator('#workspace').waitFor({state: 'visible'});
     const option = await page.locator('#project-switch option').allTextContents();
     assert.ok(option.includes('Other story project'));
+    await page.route('**/api/projects/switch', async route => {
+      const response = await route.fetch();
+      await new Promise(resolve => setTimeout(resolve, 200));
+      await route.fulfill({response});
+    });
     await page.selectOption('#project-switch', {label: 'Other story project'});
+    // Selection dispatches onchange; it does not await async session/boot work.
+    await page.waitForFunction(() => document.querySelector('#project-name').textContent === 'Other story project'
+      && !document.querySelector('#page-chat').hidden);
     await page.click('nav [data-page="stage2"]');
     await page.locator('#story-upload-form').waitFor();
     assert.equal(await page.locator('.story-source img').count(), 0);
