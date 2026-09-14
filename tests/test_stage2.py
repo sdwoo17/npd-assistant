@@ -198,6 +198,22 @@ class Stage2Tests(unittest.TestCase):
         self.assertEqual(self.f.store.get(self.u['project_id'],'extraction_run',run['id'])['status'],'failed')
         self.assertTrue(any(r['status']=='completed' for r in self.s.get(self.u,'/api/planning-extractions')))
 
+    def test_bedrock_image_uses_sdk_image_block_and_excludes_bytes_from_text(self):
+        import boto3
+        from botocore.stub import Stubber, ANY
+        from app.model import BedrockModel
+        client=boto3.client('bedrock-runtime',region_name='ap-northeast-2',aws_access_key_id='test',aws_secret_access_key='test')
+        payload={'prompt':'합성 계약 테스트'}
+        answer={'transcript':'합성','regions':[],'relations':[],'quality_issues':[],'questions':[]}
+        expected={'modelId':'test-image-model','system':ANY,'messages':[{'role':'user','content':[
+            {'text':json.dumps(payload,ensure_ascii=False)},{'image':{'format':'jpeg','source':{'bytes':b'SYNTHETIC_IMAGE_BYTES'}}}]}],
+            'inferenceConfig':ANY,'outputConfig':ANY}
+        with Stubber(client) as stub:
+            stub.add_response('converse',{'output':{'message':{'role':'assistant','content':[{'text':json.dumps(answer)}]}},
+                'stopReason':'end_turn','usage':{'inputTokens':1,'outputTokens':1,'totalTokens':2},'metrics':{'latencyMs':1}},expected)
+            self.assertEqual(BedrockModel('test-image-model','ap-northeast-2',client,'json_schema').generate('planning_image',payload,
+                images=[{'format':'jpeg','bytes':b'SYNTHETIC_IMAGE_BYTES'}]),answer)
+
     def test_public_search_requires_configuration(self):
         with patch.dict(os.environ,{'NPD_PUBLIC_SEARCH_KEY':''}):
             with self.assertRaises(AppError) as error:self.post('/api/public-research',{'query':'공개 리테일 미디어'})

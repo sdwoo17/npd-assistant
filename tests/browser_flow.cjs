@@ -425,3 +425,31 @@ test("browser: mobile planning separates source editing and review without horiz
     assert.deepEqual(errors,[]);
   } finally {await ctx.close();}
 });
+
+test("browser: image analysis creates review questions and links extracted fields to source regions", async()=>{
+  const {ctx,page,errors}=await login("po");
+  try {
+    await page.click('[data-stage="definition"]');
+    await page.getByRole("button",{name:"2.2 사용자스토리정의",exact:true}).click();
+    await page.locator('[name="asset-title"]').fill("합성 원본 영역 테스트");
+    await page.setInputFiles('[name="asset-file"]',{name:"synthetic-sketch.png",mimeType:"image/png",buffer:Buffer.from("iVBORw0KGgoAAAANSUhEUgAAACgAAAAUCAIAAABwJOjsAAAANUlEQVR4nO3NwQEAIAwCMWT/nfFrF7g+JAvkJNEGr6xqDDKZvRpjzFVTY4y5amqMMVfp8/gCAeEDJZQenysAAAAASUVORK5CYII=","base64")});
+    await page.getByRole("button",{name:"기획 자료 업로드",exact:true}).click();
+    await page.getByRole("button",{name:"원본 분석 · AI초안작성",exact:true}).click();
+    await page.fill("#draft-prompt","글자·물음표·금지 조건을 확인");
+    await page.locator('#draft-prompt-form button[type="submit"]').click();
+    await page.locator("#draft-prompt-dialog").waitFor({state:"hidden"});
+    await page.getByRole("button",{name:"r1 · text · 광고주",exact:true}).waitFor();
+    await page.getByRole("button",{name:"AI초안작성 · 새 후보/재분석",exact:true}).click();
+    await page.fill("#draft-prompt","소재 운영자 관점으로 제안");
+    await page.locator('#draft-prompt-form button[type="submit"]').click();
+    await page.locator("#draft-prompt-dialog").waitFor({state:"hidden"});
+    const candidate=page.locator('.planning-review details').filter({hasText:"소재 운영자 관점으로 제안"}).last();
+    await candidate.locator("summary").click();
+    await candidate.getByRole("button",{name:"새 스토리 초안으로 채택",exact:true}).click();
+    await page.getByRole("button",{name:"원본 추출 · 원본 영역 보기",exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('[name="actor"]')?.classList.contains("source-selected"));
+    assert.ok((await page.locator('[name="text"]').evaluateAll(nodes=>nodes.map(n=>n.value))).includes("자동 변경은 금지인가?"));
+    await page.screenshot({path:"test-results/stage2-image.png",fullPage:true});
+    assert.deepEqual(errors,[]);
+  } finally {await ctx.close();}
+});

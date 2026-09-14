@@ -26,9 +26,10 @@ Provider contracts: [Bedrock Converse](https://docs.aws.amazon.com/bedrock/lates
 
 ## Validation recorded before CI
 
-- New backend regression suite: 21 tests passed with synthetic fixtures and mocked external services.
+- New backend regression suite: 22 tests passed with synthetic fixtures and mocked external services.
 - DOM + local HTTP regression: 5 tests passed.
 - Headless installed Edge + local HTTP: 11 tests passed, including manual story confirmation/export, independent intent-driven drafts, mobile layout and the existing FGI flow.
+- An additional image browser flow passed: upload → interpretation → candidate acceptance → source-region highlighting. The Bedrock image request contract also passed against the real SDK with a stubbed transport.
 - Python/JavaScript syntax and whitespace checks passed.
 - Full Windows run at the earlier 198-test revision: 185 passed, 12 errors and 1 failure in existing Windows directory replacement, symlink and POSIX permission expectations. Supported Linux/Python 3.12 CI remains the complete regression gate; its outcome will be recorded in the PR.
 
