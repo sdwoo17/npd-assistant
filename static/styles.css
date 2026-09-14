@@ -1040,3 +1040,40 @@ form [type="submit"] {
     max-width: 100%;
   }
 }
+
+/* Stage 2 story planning workspace */
+.stage-nav, .stage-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.stage-nav { border-bottom: 1px solid var(--line); padding-bottom: 16px; }
+.stage-content { min-width: 0; }
+.stage-content .card { padding: 24px; margin-bottom: 20px; }
+.story-form { max-width: 100%; }
+.story-form textarea { min-height: 74px; }
+.story-form fieldset { border: 1px solid var(--line); border-radius: 10px; margin: 18px 0; padding: 16px; min-width: 0; }
+.story-form legend { font-weight: 700; padding: 0 7px; }
+.story-check { display: flex; gap: 9px; align-items: start; margin: 12px 0; }
+.story-check input { width: 17px; height: 17px; flex: 0 0 17px; margin: 1px 0 0; }
+.story-check span { line-height: 1.6; }
+.story-candidate, .story-criterion, .story-question { padding: 18px; margin: 12px 0; background: #f7f9ff; border: 1px solid var(--line); border-radius: 10px; }
+.story-candidate button, .story-form > button { margin: 8px 8px 8px 0; }
+.story-origin { display: flex; align-items: center; justify-content: space-between; margin: -10px 0 18px; color: var(--muted); }
+.story-origin button { font-size: 11px; padding: 5px 8px; }
+.story-editor-layout { display: grid; grid-template-columns: minmax(260px, 0.85fr) minmax(350px, 1.15fr); gap: 20px; align-items: start; }
+.story-source { position: sticky; top: 16px; max-height: 85vh; overflow: auto; min-width: 0; }
+.story-image-viewport { overflow: auto; max-height: 520px; border: 1px solid var(--line); background: #e9edf5; }
+.story-image { position: relative; width: 100%; }
+.story-image img { display: block; width: 100%; height: auto; }
+.story-image svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.story-image rect { fill: #365ceb0a; stroke: #365ceb; stroke-width: 3; }
+.story-image rect.uncertain { fill: #f0a00016; stroke: #c87700; stroke-dasharray: 8 5; }
+.story-image rect.selected { fill: #365ceb33; stroke: #173cac; stroke-width: 7; }
+.story-transcript { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; line-height: 1.7; max-width: 100%; }
+.story-highlight { background: #e9edff; padding: 8px; border-radius: 6px; }
+.story-confirm { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 20px; }
+.story-map { display: flex; align-items: stretch; gap: 16px; overflow-x: auto; margin-bottom: 24px; }
+.story-map-column { flex: 1 0 240px; max-width: 350px; background: #f0f3fa; border-radius: 12px; padding: 14px; }
+.story-lane { border-top: 1px solid #d6ddeb; padding: 8px 0; min-height: 90px; }
+.story-map-card { background: white; padding: 15px; border: 1px solid var(--line); border-radius: 8px; margin: 10px 0; }
+.story-map-card h3 { margin: 6px 0; }
+.story-history details { margin: 12px 0; }
+@media (max-width: 1050px) { .story-editor-layout { grid-template-columns: 1fr; } .story-source { position: static; max-height: 65vh; } }
+@media (max-width: 700px) { .stage-content .card { padding: 16px; } .stage-nav button { flex: 1 0 40%; } .story-criterion, .story-question { padding: 10px; } }

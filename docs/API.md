@@ -96,3 +96,28 @@ Official provider references (retrieved 2026-09-12):
 - https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html
 - https://developers.openai.com/api/docs/guides/structured-outputs
 - https://developer.apple.com/documentation/appstoreconnectapi/get-v1-apps-_id_-customerreviews
+
+## Stage 2: PO planning assets and user stories
+
+See [workflow and limits](STAGE2_USER_STORIES.md). All routes below require a project member session; neither client-supplied role nor project changes their scope. Owner-only research routes are unchanged.
+
+| Route | Contract |
+| --- | --- |
+| GET /api/stage2 | context,stories,assets,extractions,requirements; invalid dependencies are redacted; no image payload or ciphertext |
+| POST /api/stage2/context | Partial product-context fields; evidence_ids,prd_id; existing record requires expected_version |
+| POST /api/planning-assets | title,input_type image/text; image: filename,content_base64; text: text; returns metadata and optional duplicate flag |
+| GET /api/planning-assets/content/{id} | Orientation-normalized JPEG base64 or text; project scope and withdrawal checked |
+| POST /api/planning-assets/withdraw | asset_id,expected_version; soft withdrawal invalidates dependent artifacts |
+| POST /api/stories/extract | asset_id,request_id,notes optional; synchronous model request → extraction candidates only. Repeated completed request is idempotent. Retry failed/interrupted work with a new request_id. |
+| POST /api/stories/apply-candidate | extraction_id,candidate_index; optional story_id,expected_version,fields for explicit field-wise replacement. fields may include acceptance_criteria. No automatic overwrite. |
+| POST /api/stories | title,actor,problem,goal,benefit,scenario,exceptions,assumptions,epic,journey,release,feature,persona_id,evidence_ids,validation_plan,acceptance_criteria,questions. Existing record: story_id,expected_version. Returns a draft. |
+| POST /api/stories/confirm | story_id,expected_version,reviewed_source:true,reviewed_criteria:true,note optional. Server validates required fields, criteria, unresolved critical questions, evidence/validation plan and current dependencies. |
+| GET /api/stories/versions/{id} | History; changed or withdrawn dependencies are redacted |
+| POST /api/stories/reorganize | story_ids,versions map,stories array. Split one to many or merge many to one; originals become superseded and new drafts retain lineage/questions. |
+| POST /api/story-requirements | story_id,story_version,title,condition,behavior,priority; optional requirement_id,expected_version. Requires a currently valid confirmed story. |
+| GET /api/stage2/export | npd.story-package.v1; ?format=markdown → {format,text}. Only valid confirmed stories and current linked requirements. |
+| POST /api/stage2/prd | title,story_versions map,requirement_versions map,context_version (null if absent), matching the previewed package. Creates a new versioned PRD snapshot; does not overwrite an existing PRD or send to AXIOM. |
+
+`acceptance_criteria` is an array of `{given,when,then}`. Questions have `{id,text,critical,state,response}`; omit id for a new question. State is `open/answered/excluded`; non-open states need a response. Existing question IDs and criticality cannot be removed/downgraded. `release` is `mvp/later/excluded`; priority is `must/should/could/wont`.
+
+Client origin/approval/dependency/validation-status claims are not accepted. The server preserves generated source references, computes dependencies, sets definition status, and records the approving actor and exact revision. `validation_status` is only `unverified/planned`: PO confirmation never claims actual customer validation. Image originals/processing copies are encrypted; model output is schema/domain checked. Semantic accuracy still requires PO review.

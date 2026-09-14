@@ -83,7 +83,7 @@ def dependency_map(records):
     for r in records:
         for dep in r.get("dependencies", []):
             result[(dep["kind"], dep["id"], dep["version"])] = dep
-        if r.get("kind") in ("insight", "voc", "persona", "feature"):
+        if r.get("kind") in ("insight", "voc", "persona", "feature", "planning_asset", "product_context", "user_story", "story_requirement"):
             result[(r["kind"], r["id"], r.get("version", 1))] = {"id": r["id"], "kind": r["kind"], "version": r.get("version", 1)}
     return sorted(result.values(), key=lambda d: (d["kind"], d["id"]))
 

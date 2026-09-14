@@ -45,6 +45,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS record_history(id TEXT NOT NULL,project_id TEXT NOT NULL,kind TEXT NOT NULL,version INTEGER NOT NULL,body TEXT NOT NULL,PRIMARY KEY(project_id,id,version));
             CREATE TABLE IF NOT EXISTS project_state(project_id TEXT PRIMARY KEY,epoch INTEGER NOT NULL DEFAULT 0);
             CREATE UNIQUE INDEX IF NOT EXISTS persona_alias ON records(project_id,json_extract(body,'$.alias')) WHERE kind='persona';
+            CREATE UNIQUE INDEX IF NOT EXISTS story_request ON records(project_id,json_extract(body,'$.request_id')) WHERE kind='story_extraction';
             CREATE UNIQUE INDEX IF NOT EXISTS turn_request ON records(project_id,json_extract(body,'$.conversation_id'),json_extract(body,'$.request_id')) WHERE kind='turn';
             CREATE TABLE IF NOT EXISTS login_attempts(key TEXT PRIMARY KEY,attempts INTEGER NOT NULL,window_start REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS account_state(user_id TEXT PRIMARY KEY,disabled INTEGER NOT NULL DEFAULT 0);
@@ -176,7 +177,7 @@ class Store:
                 except sqlite3.IntegrityError:
                     raise AppError("동일한 이름 또는 요청이 이미 저장됐습니다.", 409)
                 saved.append(obj)
-                changed |= kind in ("source", "insight", "voc", "feature", "persona")
+                changed |= kind in ("source", "insight", "voc", "feature", "persona", "planning_asset", "product_context", "user_story", "story_requirement")
             for kind, rid, changes, expected in updates:
                 row = db.execute("SELECT body FROM records WHERE id=? AND project_id=? AND kind=?", (rid, project, kind)).fetchone()
                 if not row:
@@ -194,7 +195,7 @@ class Store:
                 except sqlite3.IntegrityError:
                     raise AppError("동일한 이름이 이미 사용 중입니다.", 409)
                 saved.append(obj)
-                changed |= kind in ("source", "insight", "voc", "feature", "persona")
+                changed |= kind in ("source", "insight", "voc", "feature", "persona", "planning_asset", "product_context", "user_story", "story_requirement")
             if changed:
                 db.execute("INSERT INTO project_state VALUES(?,?) ON CONFLICT(project_id) DO UPDATE SET epoch=excluded.epoch", (project, epoch + 1))
         return saved
@@ -248,12 +249,12 @@ class Store:
     def recover_jobs(self):
         """Call only on single-server startup, after the previous process has stopped."""
         with self.db() as db:
-            rows = db.execute("SELECT project_id,body FROM records WHERE kind='job'").fetchall()
+            rows = db.execute("SELECT project_id,body FROM records WHERE kind IN ('job','story_extraction')").fetchall()
         recovered = 0
         for row in rows:
             job = json.loads(row['body'])
             if job.get('status') == 'running':
-                self.update(row['project_id'], 'job', job['id'], {
+                self.update(row['project_id'], job['kind'], job['id'], {
                     'status': 'failed', 'error': '서버 재시작으로 처리가 중단됐습니다. 작업을 재시도하세요.'}, job.get('version', 1))
                 recovered += 1
         return recovered

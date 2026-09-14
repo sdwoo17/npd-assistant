@@ -19,7 +19,7 @@ def main():
     output = Path(args.output).resolve(); output.mkdir(parents=True, exist_ok=True)
     commands = [[sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-v'],
                 ['node', '--test', 'tests/ui_flow.cjs']]
-    if args.browser: commands.append(['node', '--test', 'tests/browser_flow.cjs'])
+    if args.browser: commands.append(['node', '--test', 'tests/browser_flow.cjs', 'tests/stories_browser.cjs'])
     runs = []
     for iteration in range(1, args.passes + 1):
         for index, cmd in enumerate(commands, 1):

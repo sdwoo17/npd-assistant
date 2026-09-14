@@ -2,9 +2,11 @@
 
 상품 기획자를 위한 **보호된 리서치 → VoC 분석 → @페르소나 인터뷰 → 근거가 연결된 PRD 변경** 워크스페이스입니다. 기본 AI 제공자는 AWS Bedrock Converse이며 OpenAI Responses API도 명시적으로 선택할 수 있습니다.
 
-이 저장소는 기존 CloudFront NPD-assistant와 분리된 프로젝트입니다. **현재 완료 범위는 단일 서버에서 실행되는 세 기능과 회귀 검증**입니다. AXIOM 실연동, 기존 AWS 앱 이식, 실제 광고주 UAT, 모델 답변 품질 검증까지 완료했다는 의미는 아닙니다. [수용 기준과 남은 검증](docs/VERIFICATION.md)을 확인하세요.
+이 저장소는 기존 CloudFront NPD-assistant와 분리된 프로젝트입니다. **현재 완료 범위는 단일 서버의 리서치·VoC·페르소나·사용자 스토리 흐름과 회귀 검증**입니다. AXIOM 실연동, 기존 AWS 앱 이식, 실제 광고주 UAT, 모델 답변 품질 검증까지 완료했다는 의미는 아닙니다. [수용 기준과 남은 검증](docs/VERIFICATION.md)을 확인하세요.
 
 2026-09-13 추가 구현: 필드별 가중 검색, 승인 후 가상 프로필 활성화, 기존 자산 팩의 프로필 등록, PPTX 텍스트와 DOCX 순서 보존, 운영자 계정 관리, 암호화 백업·복구, 배포 주소 전체 흐름 검사. [명세 대비 구현 결과](docs/IMPLEMENTATION_DELTA_20260913.md)와 [고객 파일럿 운영 절차](docs/PILOT_OPERATIONS.md)를 참고하세요.
+
+2026-09-14 추가 구현: **2단계 서비스 요구사항** 메뉴에서 기획 이미지·텍스트 → 사용자 스토리 초안 → 원본 대조·PO 수정·확정 → 기능 요구사항 → PRD 초안·JSON/Markdown 전달을 지원합니다. 이미지 해석은 Bedrock 이미지 입력을 사용하며 실제 손글씨 정확도는 모델 연결 후 검증해야 합니다. [사용 순서·권한·제한](docs/STAGE2_USER_STORIES.md)을 확인하세요.
 
 ## Bedrock으로 바로 실행
 
@@ -23,7 +25,7 @@ python scripts/start_bedrock.py --region ap-northeast-2 --model-id MODEL_OR_PROF
 Python 3.11 이상, 검증 환경은 Python 3.12 / Node 22 이상입니다. 화면은 별도 번들 빌드 없이 서버가 제공합니다.
 
 ```bash
-git clone --branch feature/research-workflow-v2 https://github.com/sdwoo17/npd-assistant.git
+git clone --branch main https://github.com/sdwoo17/npd-assistant.git
 cd npd-assistant
 python3 -m venv .venv
 source .venv/bin/activate
