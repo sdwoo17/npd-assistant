@@ -176,6 +176,7 @@ def clean_fields(output_type, data):
 
 def content_errors(row):
     if row.get('applicability')=='not_applicable':
+        if row['output_type']=='brief':return ['조사 범위와 책임자는 해당 없음으로 생략할 수 없습니다.']
         return [] if row.get('na_reason','').strip() else ['해당 없음의 이유가 필요합니다.']
     data=row['fields'];kind=row['output_type'];errors=[]
     for key,spec in TYPES[kind].items():

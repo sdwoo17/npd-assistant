@@ -55,6 +55,8 @@ class Stage1ResearchTests(unittest.TestCase):
     def test_all_task_contracts_reject_empty_review_and_na_requires_reason(self):
         brief=self.brief()
         self.assertEqual(len(TASKS),17)
+        missing_scope=item(self.s,self.u,'brief',review=False,applicability='not_applicable',na_reason='Synthetic attempted scope bypass')
+        with self.assertRaises(AppError):self.review(missing_scope)
         for task,(_,kind,_) in TASKS.items():
             if kind=='brief':continue
             row=item(self.s,self.u,kind,brief['id'],review=False,fields={k:None if s['type']=='number' else [] if s['type']=='lines' else False if s['type']=='checkbox' else '' for k,s in TYPES[kind].items()})
