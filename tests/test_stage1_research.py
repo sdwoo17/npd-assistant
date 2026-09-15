@@ -273,4 +273,12 @@ class Stage1ResearchTests(unittest.TestCase):
         row=item(self.s,self.u,'utility',brief['id'],review=False,fields=synthetic_fields('utility',before_minutes=0))
         with self.assertRaises(AppError):self.review(row)
 
+    def test_legacy_pack_locator_is_preserved_without_certifying_offsets(self):
+        row=self.s.post(self.f.owner,'/api/insights',{'source_id':self.f.source['id'],
+            'title':'Synthetic legacy pack','text':'Synthetic legacy finding','source_locator':'page-002'})
+        self.assertEqual(row['source_locator'],{'parts':[],'legacy_label':'page-002','status':'NEEDS_REVIEW'})
+        edited=self.s.post(self.f.owner,'/api/insights/update',{'insight_id':row['id'],
+            'expected_version':row['version'],'title':'Edited legacy finding'})
+        self.assertEqual(edited['source_locator'],row['source_locator'])
+
 if __name__=='__main__':unittest.main()

@@ -52,10 +52,15 @@ def document_locations(body, content):
 
 def clean_locator(value):
     if value is None:return {'status':'NEEDS_REVIEW','parts':[]}
+    # Earlier private packs used a human-authored string, not verified offsets.
+    # Retain that label for review without treating it as parsed coverage.
+    if isinstance(value,str):value={'parts':[],'legacy_label':value}
     if not isinstance(value,dict) or not isinstance(value.get('parts'),list) or len(value['parts'])>2000:
         from .store import AppError
         raise AppError('원문 위치 형식을 확인하세요.')
     from .store import AppError
+    legacy=value.get('legacy_label','')
+    if not isinstance(legacy,str) or len(legacy)>500:raise AppError('기존 원문 위치는 500자 이내로 작성하세요.')
     result=[]
     for part in value['parts']:
         if not isinstance(part,dict) or not isinstance(part.get('locator'),str) or not re.fullmatch(r'[a-z0-9/._-]{1,160}',part['locator']):
@@ -65,4 +70,5 @@ def clean_locator(value):
             raise AppError('원문 문자 위치 범위를 확인하세요.')
         result.append({'locator':part['locator'],'start':start,'end':end})
     # Positions identify extraction coverage, never certify semantic support.
-    return {'status':'COVERAGE_REQUIRES_PASSAGE_REVIEW','parts':result}
+    return {'status':'COVERAGE_REQUIRES_PASSAGE_REVIEW' if result else 'NEEDS_REVIEW','parts':result,
+        **({'legacy_label':legacy} if legacy else {})}
