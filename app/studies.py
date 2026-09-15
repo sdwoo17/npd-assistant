@@ -36,7 +36,7 @@ class Studies:
         if len(ids) != len(data.get("persona_ids", [])):
             raise AppError("참여자를 중복 없이 선택하세요.")
         people = [self.get_persona(p, rid) for rid in ids]
-        fields = {"title": text(data, "title", 200), "objective": optional(data, "objective", 3000),
+        fields = {"title": text(data, "title", 200), "objective": optional(data, "objective", 3000), "moderation_brief": optional(data, "moderation_brief", 5000),
                   "research_questions": questions, "recruitment_criteria": optional(data, "recruitment_criteria", 3000),
                   "persona_ids": ids, "participants": [{"id": r["id"], "version": r["version"]} for r in people],
                   "target_prd_id": optional(data, "target_prd_id", 80), "stage": stage,
@@ -50,7 +50,7 @@ class Studies:
         if stage == "guide" and (not people or not fields["recruitment_criteria"]):
             raise AppError("리크루팅 기준과 참여자 1~6명을 지정하세요.")
         changed = old and any(fields[k] != old.get(k) for k in (
-            "title", "objective", "research_questions", "recruitment_criteria", "participants", "target_prd_id"))
+            "title", "objective", "moderation_brief", "research_questions", "recruitment_criteria", "participants", "target_prd_id"))
         guide = old.get("guide") if old and not changed else None
         fields.update(guide=guide, dependencies=dependency_map(people + ([guide] if guide else [])))
         if old:
@@ -90,7 +90,7 @@ class Studies:
             evidence = self.search(p, row["objective"] + " " + " ".join(row["research_questions"]))[0]
             if not evidence:
                 raise AppError("가이드를 생성할 공개 근거가 없습니다. 근거를 추가하거나 직접 작성하세요.", 409)
-            result = self.generate("fgi_guide", {"objective": row["objective"], "research_questions": row["research_questions"],
+            result = self.generate("fgi_guide", {"objective": row["objective"], "moderation_brief": row.get("moderation_brief", ""), "research_questions": row["research_questions"],
                 "recruitment_criteria": row["recruitment_criteria"], "participants": people,
                 "section_titles": list(GUIDE_SECTIONS), "evidence": evidence})
             sections = self.checked_guide(result["sections"], evidence, True)
@@ -140,7 +140,7 @@ class Studies:
         row = self.study(user, conv["study_id"])
         if row.get("conversation_id") != conv["id"]:
             raise AppError("스터디와 대화 연결을 확인하세요.", 409)
-        return {k: row[k] for k in ("id", "title", "objective", "research_questions", "recruitment_criteria",
+        return {k: row.get(k, "") for k in ("id", "title", "objective", "moderation_brief", "research_questions", "recruitment_criteria",
                                     "participants", "guide", "dependencies", "status")}
 
     def complete_study(self, user, body):

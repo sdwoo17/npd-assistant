@@ -199,7 +199,7 @@ class StudyTests(unittest.TestCase):
         self.assertEqual(caught.exception.status, 404)
 
     def test_pool_cap_is_transactional_under_concurrent_creation_and_restore(self):
-        people = [self.f.persona('광고주' + str(i)) for i in range(19)]
+        people = [self.f.persona('광고주' + str(i)) for i in range(99)]
         def create(i):
             try:
                 return self.f.persona('동시' + str(i))

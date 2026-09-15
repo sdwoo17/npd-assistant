@@ -14,12 +14,18 @@ from .assets import Assets
 from .citations import Citations
 from .studies import Studies, GUIDE_SECTIONS
 from .store import AppError, timestamp
+from .planning_assets import PlanningAssets
+from .stories import Stories
+from .definitions import Definitions
+from .research_workflow import ResearchWorkflow
+from .persona_catalog import PersonaCatalog, PERSONA_POOL_LIMIT
+from .research_workspace import ResearchWorkspace
 
 # Public compatibility export for earlier integrations.
 from .contracts import validate_answer as cited
 
 
-class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies):
+class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, PlanningAssets, Stories, Definitions, ResearchWorkflow, PersonaCatalog, ResearchWorkspace):
     def __init__(self, store, model):
         self.store, self.model = store, model
         self._locks = {}
@@ -31,9 +37,9 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies):
     def audit(self, user, action, rid):
         self.store.put(user["project_id"], "audit", {"actor_id": user["id"], "action": action, "record_id": rid})
 
-    def generate(self, task, payload):
+    def generate(self, task, payload, images=None):
         try:
-            result = validate(task, self.model.generate(task, payload))
+            result = validate(task, self.model.generate(task, payload, images=images) if images else self.model.generate(task, payload))
         except Exception:
             self._last_model_success = None
             raise
@@ -64,13 +70,16 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies):
         insights = []
         for r in self.store.list(project, "insight"):
             source = sources.get(r["source_id"])
-            if not r["published"] or not source or r.get("source_version", 1) != source.get("content_version", 1):
+            if not r["published"] or not source or source.get("policy") == "amazon_internal" or r.get("source_version", 1) != source.get("content_version", 1):
                 continue
             if project not in r.get("allowed_projects", [project]):
                 continue
             row = {k: r.get(k, "") for k in ("id", "text", "title", "feature", "applicability", "limitations", "competitor", "observed_at", "public_url")}
             row.update(kind="insight", version=r["version"], source_version=r.get("source_version", 1), segment="",
                 feature_ids=r.get("feature_ids", [r["feature"]]), service_id=r.get("service_id", "advertiser_portal"), evidence_type=r.get("evidence_type", "research"))
+            row.update(evidence_category=r.get('evidence_category','SYNTHETIC_FGI' if r.get('evidence_type')=='synthetic' else 'ATTACHMENT_STATEMENT'),
+                source_locator=r.get('source_locator',{'status':'NEEDS_REVIEW','parts':[]}),
+                source_family_id=r.get('source_family_id',''),claim_status=r.get('claim_status','UNVERIFIED'))
             insights.append(row)
         voc = [{k: r.get(k, "") for k in ("id", "kind", "version", "text", "feature", "feature_ids", "service_id", "segment", "evidence_type",
             "external_id", "occurred_at", "collected_at", "source_type", "source_name", "source_url", "app_id", "rating", "problem", "need")} for r in self.voc_records(project)]
@@ -79,7 +88,15 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies):
             r["feature_terms"] = " ".join(t for f in r["feature_ids"] if f in taxonomy for t in taxonomy[f]["terms"])
         return insights + voc
 
-    def accessible(self, project, record):
+    def accessible(self, project, record, seen=None, _memo=None, _allowed=None):
+        if record.get('withdrawn'):return False
+        seen = set(seen or ())
+        identity = (record.get("kind"), record.get("id"), record.get("version"))
+        if identity in seen:
+            return False
+        memo={} if _memo is None else _memo
+        if identity in memo:return memo[identity]
+        seen.add(identity)
         dependencies = record.get("dependencies")
         if dependencies is None:
             # Legacy generated artifacts have incomplete provenance; never grandfather them in.
@@ -93,17 +110,25 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies):
             if not group_ids.issubset(tracked_ids):
                 # Old edited summaries may have citations without version lineage.
                 return False
-        allowed = {(e["kind"], e["id"], e["version"]) for e in self.knowledge(project)}
+        allowed = {(e["kind"], e["id"], e["version"]) for e in self.knowledge(project)} if _allowed is None else _allowed
         for d in dependencies:
             if d["kind"] == "persona":
                 try:
                     candidate = next((r for r in self.store.history(project, "persona", d["id"]) if r.get("version", 1) == d["version"]), None)
                 except AppError:
                     return False
-                if not candidate or not self.accessible(project, candidate):
+                if not candidate or not self.accessible(project, candidate, seen, memo, allowed):
+                    return False
+            elif d["kind"] in ("planning_asset", "user_story", "definition", "research_result", "debrief", "story_draft", "public_search", "research_item", "research_pack"):
+                try:
+                    source = self.store.get(project, d["kind"], d["id"])
+                    if source["version"] != d["version"] or source.get("withdrawn") or not self.accessible(project, source, seen, memo, allowed):
+                        return False
+                except AppError:
                     return False
             elif (d["kind"], d["id"], d["version"]) not in allowed:
                 return False
+        memo[identity]=True
         return True
 
     def persona_active(self, project, persona):
@@ -233,10 +258,43 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies):
         parsed = urlparse(route)
         path, query = parsed.path, {k: v[-1] for k, v in parse_qs(parsed.query).items()}
         p = user["project_id"]
+        if path == '/api/research-workspace':
+            return self.research_workspace(user)
+        if path == '/api/research-workspace/impact':
+            return self.research_impact(user)
+        if path == '/api/research-workspace/exports':
+            return [{k:r[k] for k in ('id','version','research_id','hash','receipt_status','created_at')}
+                for r in self.store.list(p,'research_export') if self.research_history_visible(user,r)]
+        if path == '/api/research-workspace/receipts':
+            return [r for r in self.store.list(p,'research_receipt') if self.accessible(p,r)]
         if path == "/api/assets/persona-templates":
             return self.template_previews(user)
+        if path == "/api/research-results":
+            return self.research_results(user)
+        if path == "/api/persona-catalog":
+            return self.persona_catalog(user, parse_qs(urlparse(route).query).get("q", [""])[0])
+        if path == "/api/planning-assets":
+            return self.planning_assets(user)
+        if path.startswith("/api/planning-assets/raw/"):
+            return self.planning_asset_raw(user, path.rsplit("/", 1)[-1], query.get("version"))
+        if path == "/api/planning-extractions":
+            return self.planning_extractions(user)
+        if path.startswith("/api/planning-extractions/"):
+            return self.extraction(user, path.rsplit("/", 1)[-1])
+        if path == "/api/stories":
+            return self.story_list(user)
+        if path.startswith("/api/stories/versions/"):
+            return self.story_history(user, path.rsplit("/", 1)[-1])
+        if path.startswith("/api/stories/"):
+            return self.story(user, path.rsplit("/", 1)[-1])
+        if path == "/api/story-drafts":
+            return [r for r in self.store.list(p, "story_draft") if self.accessible(p, r)]
+        if path == "/api/definitions":
+            return self.definition_list(user)
+        if path.startswith("/api/definitions/versions/"):
+            return [r if self.accessible(p,r) else self.redacted(r) for r in self.store.history(p,"definition",path.rsplit("/",1)[-1])]
         if path == "/api/studies":
-            return {"studies": self.study_list(user), "guide_sections": list(GUIDE_SECTIONS), "participant_limit": 6, "persona_pool_limit": 20}
+            return {"studies": self.study_list(user), "guide_sections": list(GUIDE_SECTIONS), "participant_limit": 6, "persona_pool_limit": PERSONA_POOL_LIMIT}
         if path.startswith("/api/studies/"):
             return self.study(user, path.rsplit("/", 1)[-1])
         if path == "/api/model/status":
@@ -282,6 +340,31 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies):
     def post(self, user, route, body):
         p = user["project_id"]
         routes = {"/api/research/upload": self.research_upload, "/api/research/extract": self.research_extract,
+            '/api/research-workspace/items':self.save_research_item,
+            '/api/research-workspace/generate':self.generate_research_item,
+            '/api/research-workspace/items/review':self.review_research_item,
+            '/api/research-workspace/items/withdraw':self.withdraw_research_item,
+            '/api/research-workspace/packs':self.save_research_pack,
+            '/api/research-workspace/select':self.select_research_pack,
+            '/api/research-workspace/gate':self.research_gate,
+            '/api/research-workspace/compose':self.compose_research_prd,
+            '/api/research-workspace/export':self.research_handoff,
+            '/api/research-workspace/receipt':self.record_research_receipt,
+            '/api/definitions/readiness':self.definition_readiness,
+            "/api/persona-catalog/register": self.register_persona_catalog,
+            "/api/research-results": self.save_research_result, "/api/research-results/review": self.review_research_result,
+            "/api/service-analysis": self.analyze_existing_service, "/api/public-research": self.public_research, "/api/public-research/analyze": self.analyze_public_research,
+            "/api/planning-assets": self.upload_planning_asset, "/api/planning-assets/upload": self.upload_planning_asset, "/api/planning-assets/withdraw": self.withdraw_planning_asset,
+            "/api/planning-assets/extract": self.extract_planning_asset,
+            "/api/planning-assets/regions": self.edit_planning_regions,
+            "/api/stories/recovery-preview": self.preview_story_recovery, "/api/stories/recover": self.recover_story_sources,
+            "/api/stories": self.save_story, "/api/stories/update": self.save_story,
+            "/api/stories/review": self.review_story, "/api/stories/validation": self.story_validation,
+            "/api/story-drafts": self.generate_stories, "/api/story-drafts/apply": self.apply_story_draft,
+            "/api/stories/restructure": self.restructure_stories, "/api/stories/export": self.story_package,
+            "/api/definitions": self.save_definition, "/api/definitions/update": self.save_definition,
+            "/api/definitions/generate": self.generate_definition, "/api/definitions/confirm": self.confirm_definition,
+            "/api/definitions/export": self.definition_export,
             "/api/citations/verify": self.verify_prd_citations,
             "/api/studies": self.save_study, "/api/studies/update": self.save_study,
             "/api/studies/guide": self.study_guide, "/api/studies/start": self.start_study,

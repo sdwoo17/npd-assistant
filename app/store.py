@@ -178,7 +178,7 @@ class Store:
                 except sqlite3.IntegrityError:
                     raise AppError("동일한 이름 또는 요청이 이미 저장됐습니다.", 409)
                 saved.append(obj)
-                changed |= kind in ("source", "insight", "voc", "feature", "persona", "study")
+                changed |= kind in ("source", "insight", "voc", "feature", "persona", "study", "planning_asset", "user_story", "definition", "research_result", "research_item", "research_pack", "research_selection")
             for kind, rid, changes, expected in updates:
                 row = db.execute("SELECT body FROM records WHERE id=? AND project_id=? AND kind=?", (rid, project, kind)).fetchone()
                 if not row:
@@ -196,10 +196,10 @@ class Store:
                 except sqlite3.IntegrityError:
                     raise AppError("동일한 이름이 이미 사용 중입니다.", 409)
                 saved.append(obj)
-                changed |= kind in ("source", "insight", "voc", "feature", "persona", "study")
+                changed |= kind in ("source", "insight", "voc", "feature", "persona", "study", "planning_asset", "user_story", "definition", "research_result", "research_item", "research_pack", "research_selection")
             after_pool = db.execute(pool_query, (project,)).fetchone()[0]
-            if after_pool > 20 and after_pool > before_pool:
-                raise AppError("페르소나 풀은 최대 20명입니다. 사용하지 않는 프로필을 보관한 후 추가하세요.", 409)
+            if after_pool > 100 and after_pool > before_pool:
+                raise AppError("페르소나 풀은 최대 100명입니다. 사용하지 않는 프로필을 보관한 후 추가하세요.", 409)
             if changed:
                 db.execute("INSERT INTO project_state VALUES(?,?) ON CONFLICT(project_id) DO UPDATE SET epoch=excluded.epoch", (project, epoch + 1))
         return saved
@@ -253,12 +253,12 @@ class Store:
     def recover_jobs(self):
         """Call only on single-server startup, after the previous process has stopped."""
         with self.db() as db:
-            rows = db.execute("SELECT project_id,body FROM records WHERE kind='job'").fetchall()
+            rows = db.execute("SELECT project_id,kind,body FROM records WHERE kind IN ('job','extraction_run')").fetchall()
         recovered = 0
         for row in rows:
             job = json.loads(row['body'])
             if job.get('status') == 'running':
-                self.update(row['project_id'], 'job', job['id'], {
+                self.update(row['project_id'], row['kind'], job['id'], {
                     'status': 'failed', 'error': '서버 재시작으로 처리가 중단됐습니다. 작업을 재시도하세요.'}, job.get('version', 1))
                 recovered += 1
         return recovered

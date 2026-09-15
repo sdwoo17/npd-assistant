@@ -6,6 +6,8 @@
     <title>NPD Assistant · Research Workspace</title>
     <link rel="stylesheet" href="/styles.css" />
     <script src="/app.js" defer></script>
+    <script src="/planning.js" defer></script>
+    <script src="/research-workspace.js" defer></script>
   </head>
   <body>
     <section id="login-screen">
@@ -67,15 +69,21 @@
             /><button type="submit">새 프로젝트</button>
           </form>
         </details>
-        <nav aria-label="주 메뉴">
-          <button data-page="chat" class="active">◫ &nbsp; 리서치 채팅</button
+        <nav aria-label="개발 단계" class="stage-nav">
+          <button data-stage="research">1 리서치</button><button data-stage="definition">2 PRD작성</button>
+          <button data-stage="prototype">3 프로토타입개발</button><button data-stage="uat">4 UAT/피드백</button>
+        </nav>
+        <nav aria-label="리서치 작업" id="research-subnav"><button data-page="baseline">기존서비스분석</button>
+          <button data-page="research-workspace">연구 작업·PRD 준비</button>
+          <button data-page="chat" class="active">선진사례분석</button
           ><button data-page="research" id="research-nav">
             ▤ &nbsp; 지식 관리</button
-          ><button data-page="voc">◉ &nbsp; 고객 VoC</button
+          ><button data-page="voc">VOC분석</button
           ><button data-page="personas">◎ &nbsp; 페르소나</button
-          ><button data-page="studies">◉ &nbsp; FGI 스터디</button
+          ><button data-page="studies">FGI</button
           ><button data-page="prd">▧ &nbsp; PRD 제안</button>
         </nav>
+        <div id="planning-tools" class="planning-tools" aria-label="자료·기획 관리"></div>
         <div class="sidebar-bottom">
           <span id="identity"></span><small id="role-name"></small
           ><button id="logout">로그아웃 ↗</button>
@@ -108,7 +116,13 @@
             <button id="test-bedrock" class="secondary">Bedrock 연결 테스트</button>
             <small>소량의 테스트 요청을 전송합니다. 고객 자료는 포함하지 않습니다.</small>
           </div>
+          <section id="page-baseline" hidden><div id="baseline-workspace"></div></section>
+          <section id="page-research-workspace" hidden><div id="research-workspace"></div></section>
+          <section id="page-definition" hidden><nav id="definition-tabs" aria-label="PRD 작성 단계"></nav><div id="definition-workspace"></div></section>
+          <section id="page-prototype" hidden><div class="panel"><h2>프로토타입개발 전달</h2><p>확정한 PRD와 사용자 스토리를 PRD작성 단계에서 내보내 개발 도구에 전달하세요. 이 저장소에는 프로토타입 자동 생성·배포 기능이 아직 구현되어 있지 않습니다.</p></div></section>
+          <section id="page-uat" hidden><div class="panel"><h2>UAT/피드백</h2><p>확정 스토리의 Given/When/Then 수용 기준을 UAT 시나리오로 활용할 수 있습니다. 이 저장소에는 실행 결과를 수집하는 UAT 관리 기능이 아직 구현되어 있지 않습니다.</p></div></section>
           <section id="page-chat">
+            <div id="public-research-workspace" class="panel"></div>
             <div class="chat-layout">
               <div class="chat-panel">
                 <div class="chat-toolbar">
@@ -335,7 +349,7 @@
               <pre id="raw-content"></pre>
             </div>
           </section>
-          <section id="page-voc" hidden>
+          <section id="page-voc" hidden><div id="voc-result-workspace" class="panel"></div>
             <details id="taxonomy-owner" class="panel">
               <summary>서비스 기능 목록·프로젝트 참여자 관리</summary>
               <form id="taxonomy-import">
@@ -464,7 +478,7 @@
               <div id="voc-list" class="voc-grid"></div>
             </div>
           </section>
-          <section id="page-personas" hidden>
+          <section id="page-personas" hidden><div id="persona-catalog-workspace" class="panel"></div>
             <div class="section-banner">
               <strong>근거 기반 가상 광고주</strong
               ><span
@@ -520,7 +534,7 @@
               </form>
             </details>
           </section>
-          <section id="page-studies" hidden>
+          <section id="page-studies" hidden><div id="actual-fgi-workspace" class="panel"></div>
             <div class="section-banner"><strong>설계부터 검토본까지</strong><span>가상 FGI는 실제 고객 검증이 아닙니다. 실제 고객에게 확인할 질문과 기획 가설을 정리하세요.</span></div>
             <form id="study-create" class="panel">
               <label for="study-new-title">새 FGI 스터디 제목</label><input id="study-new-title" maxlength="200" required>
@@ -573,5 +587,10 @@
         </main>
       </div>
     </div>
+    <dialog id="draft-prompt-dialog" aria-labelledby="draft-prompt-title"><form id="draft-prompt-form">
+      <h2 id="draft-prompt-title">AI초안작성</h2><label for="draft-prompt">이번 초안에 반영할 목적·사용자·범위·금지 조건</label>
+      <textarea id="draft-prompt" rows="6" maxlength="5000" required></textarea><p>새 후보를 작성합니다. 내용을 검토한 후 채택·확정하세요.</p>
+      <button type="submit" class="primary">초안 작성</button><button type="button" id="draft-prompt-cancel">취소</button>
+    </form></dialog>
   </body>
 </html>

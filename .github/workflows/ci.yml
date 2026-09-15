@@ -23,6 +23,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: python -m compileall -q app manage.py scripts
       - run: node --check static/app.js
+      - run: node --check static/planning.js
+      - run: node --check static/research-workspace.js
       - run: python scripts/regression.py --passes 3 --browser
       - name: Build container and verify local HTTP startup
         run: |

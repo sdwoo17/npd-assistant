@@ -21,7 +21,7 @@ before(async () => {
     });
     server.once("error", reject);
   });
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true, ...(process.env.NPD_TEST_BROWSER_CHANNEL ? {channel:process.env.NPD_TEST_BROWSER_CHANNEL} : {}) });
 });
 after(async () => {
   if (browser) await browser.close();
@@ -59,7 +59,7 @@ async function ask(page, text) {
   );
 }
 async function nav(page, name) {
-  await page.locator('nav [data-page="' + name + '"]').click();
+  await page.locator('.sidebar [data-page="' + name + '"]').click();
   await page.locator("#page-" + name).waitFor({ state: "visible" });
 }
 
@@ -316,7 +316,9 @@ test("browser: FGI guide review, completed study export and private citation inp
     const field = key => page.locator('#study-detail [data-field="'+key+'"]');
     await field("study_objective").fill("소재 리포트 분석");
     await field("study_questions").fill("판단 근거는 무엇인가요?");
+    const designSaved=page.waitForResponse(r=>r.url().endsWith("/api/studies/update")&&r.request().method()==="POST");
     await page.getByRole("button", {name:"설계 저장 · 리크루팅으로", exact:true}).click();
+    const designResponse=await designSaved;assert.equal(designResponse.status(),201,await designResponse.text());
     await page.getByRole("button", {name:"리크루팅 저장 · 가이드로", exact:true}).waitFor();
     await field("study_criteria").fill("리포트 담당 광고주 · 가상 모집");
     const first = await field("study_personas").locator("option").first().getAttribute("value");
@@ -357,4 +359,239 @@ test("browser: FGI guide review, completed study export and private citation inp
     assert.equal(await page.locator("#study-detail").textContent(),"");
     assert.deepEqual(errors,[]);
   } finally { await ctx.close(); }
+});
+
+test("browser: manual story confirmation preserves exact exported version and draft edits", async()=>{
+  const {ctx,page,errors}=await login("po");
+  try {
+    await page.click('[data-stage="definition"]');
+    await page.getByRole("button",{name:"2.2 사용자스토리정의",exact:true}).click();
+    await page.locator('[name="actor"]').fill("UI 합성 광고주");
+    await page.locator('[name="action"]').fill("기간 조건을 확인한다");
+    await page.locator('[name="value"]').fill("비교 오류를 피한다");
+    await page.locator('[name="problem"]').fill("기간 조건이 명확하지 않음");
+    await page.locator('[name="new_problem"]').check();
+    await page.locator('[name="validation_task"]').fill("실제 광고주에게 검증");
+    await page.getByRole("button",{name:"수용 기준 추가",exact:true}).click();
+    await page.locator('[name="given"]').fill("지표 화면을 열었을 때");
+    await page.locator('[name="when"]').fill("기간을 변경하면");
+    await page.locator('[name="then"]').fill("선택한 기간을 표시한다");
+    await page.getByRole("button",{name:"초안 저장",exact:true}).click();
+    await page.getByRole("button",{name:"이 버전 설계안 확정",exact:true}).click();
+    await page.getByRole("button",{name:"구조화 설계안 내보내기",exact:true}).waitFor();
+    const [download]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:"구조화 설계안 내보내기",exact:true}).click()]);
+    const fs=require("node:fs/promises"),payload=JSON.parse(await fs.readFile(await download.path(),"utf8"));
+    assert.equal(payload.schema_version,"npd.story-package.v1");
+    assert.equal(payload.stories[0].customer_validation,"unverified");assert.equal(payload.stories[0].acceptance_criteria[0].then,"선택한 기간을 표시한다");
+    await page.locator('[name="value"]').fill("PO가 수정한 가치");
+    await page.getByRole("button",{name:"초안 저장",exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('.planning-status')?.textContent.includes('설계: draft'));
+    await page.screenshot({path:"test-results/stage2-manual-desktop.png",fullPage:true});
+    assert.deepEqual(errors,[]);
+  } finally {await ctx.close();}
+});
+
+test("browser: each AI draft asks for PO intent and creates an independent document", async()=>{
+  const {ctx,page,errors}=await login("po");
+  try {
+    await page.click('[data-stage="definition"]');
+    for(const intent of ["UI 광고주 관점 A","UI 운영자 관점 B"]){
+      await page.getByRole("button",{name:"AI초안작성",exact:true}).click();
+      await page.locator("#draft-prompt-dialog").waitFor({state:"visible"});
+      await page.fill("#draft-prompt",intent);
+      await page.locator('#draft-prompt-form button[type="submit"]').click();
+      await page.locator("#draft-prompt-dialog").waitFor({state:"hidden"});
+      assert.equal(await page.locator('[name="document-title"]').inputValue(),intent);
+    }
+    assert.ok(await page.getByRole("button",{name:/UI 광고주 관점 A · v1 · draft/}).count());
+    assert.ok(await page.getByRole("button",{name:/UI 운영자 관점 B · v1 · draft/}).count());
+    assert.deepEqual(errors,[]);
+  } finally {await ctx.close();}
+});
+
+test("browser: mobile planning separates source editing and review without horizontal overflow", async()=>{
+  const {ctx,page,errors}=await login("po",{width:390,height:844});
+  try {
+    await page.click('[data-stage="definition"]');
+    await page.getByRole("button",{name:"2.2 사용자스토리정의",exact:true}).click();
+    await page.locator('[name="actor"]').waitFor({state:"visible"});
+    await page.getByRole("button",{name:"원본",exact:true}).click();
+    await page.locator('[name="asset-file"]').waitFor({state:"visible"});
+    await page.getByRole("button",{name:"검토·확정",exact:true}).click();
+    await page.getByRole("button",{name:"AI초안작성 · 새 후보/재분석",exact:true}).waitFor({state:"visible"});
+    const size=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));
+    assert.ok(size.scroll<=size.width+1,JSON.stringify(size));
+    await page.screenshot({path:"test-results/stage2-mobile.png",fullPage:true});
+    assert.deepEqual(errors,[]);
+  } finally {await ctx.close();}
+});
+
+test("browser: image analysis creates review questions and links extracted fields to source regions", async()=>{
+  const {ctx,page,errors}=await login("po");
+  try {
+    await page.click('[data-stage="definition"]');
+    await page.getByRole("button",{name:"2.2 사용자스토리정의",exact:true}).click();
+    await page.locator('[name="asset-title"]').fill("합성 원본 영역 테스트");
+    await page.setInputFiles('[name="asset-file"]',{name:"synthetic-sketch.png",mimeType:"image/png",buffer:Buffer.from("iVBORw0KGgoAAAANSUhEUgAAACgAAAAUCAIAAABwJOjsAAAANUlEQVR4nO3NwQEAIAwCMWT/nfFrF7g+JAvkJNEGr6xqDDKZvRpjzFVTY4y5amqMMVfp8/gCAeEDJZQenysAAAAASUVORK5CYII=","base64")});
+    await page.getByRole("button",{name:"기획 자료 업로드",exact:true}).click();
+    await page.getByRole("button",{name:"원본 분석 · AI초안작성",exact:true}).click();
+    await page.fill("#draft-prompt","글자·물음표·금지 조건을 확인");
+    await page.locator('#draft-prompt-form button[type="submit"]').click();
+    await page.locator("#draft-prompt-dialog").waitFor({state:"hidden"});
+    await page.getByRole("button",{name:"r1 · text · 광고주",exact:true}).waitFor();
+    await page.getByRole("button",{name:"이 분석을 스토리 입력에 추가",exact:true}).click();
+    await page.getByRole("button",{name:"AI초안작성 · 새 후보/재분석",exact:true}).click();
+    await page.fill("#draft-prompt","소재 운영자 관점으로 제안");
+    await page.locator('#draft-prompt-form button[type="submit"]').click();
+    await page.locator("#draft-prompt-dialog").waitFor({state:"hidden"});
+    const candidate=page.locator('.planning-review details').filter({hasText:"소재 운영자 관점으로 제안"}).last();
+    await candidate.locator("summary").click();
+    await candidate.getByRole("button",{name:"새 스토리 초안으로 채택",exact:true}).click();
+    await page.getByRole("button",{name:"원본 추출 · 원본 영역 보기",exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('[name="actor"]')?.classList.contains("source-selected"));
+    assert.ok((await page.locator('[name="text"]').evaluateAll(nodes=>nodes.map(n=>n.value))).includes("자동 변경은 금지인가?"));
+    await page.screenshot({path:"test-results/stage2-image.png",fullPage:true});
+    assert.deepEqual(errors,[]);
+  } finally {await ctx.close();}
+});
+
+async function planningPost(page, path, action){
+  const done=page.waitForResponse(r=>r.url().endsWith(path)&&r.request().method()==="POST");
+  await action();const response=await done;assert.equal(response.status(),201,await response.text());return response.json();
+}
+async function planningIntent(page,label,intent,path){
+  await page.getByRole("button",{name:label,exact:true}).click();await page.fill("#draft-prompt",intent);
+  const result=await planningPost(page,path,()=>page.locator('#draft-prompt-form button[type="submit"]').click());
+  await page.locator("#draft-prompt-dialog").waitFor({state:"hidden"});return result;
+}
+async function planningImage(page,title,color){
+  const data=await page.evaluate(color=>{const c=document.createElement("canvas");c.width=80;c.height=40;const g=c.getContext("2d");g.fillStyle=color;g.fillRect(0,0,80,40);return c.toDataURL("image/png").split(",")[1];},color);
+  await page.locator('[name="asset-title"]').fill(title);
+  await page.setInputFiles('[name="asset-file"]',{name:"synthetic-"+color+".png",mimeType:"image/png",buffer:Buffer.from(data,"base64")});
+  return planningPost(page,"/api/planning-assets",()=>page.getByRole("button",{name:"기획 자료 업로드",exact:true}).click());
+}
+test("browser: selected crop, immutable region edits and explicit image ordering reach story generation",async()=>{
+  const {ctx,page,errors}=await login("po");
+  try {
+    await page.click('[data-stage="definition"]');await page.getByRole("button",{name:"2.2 사용자스토리정의",exact:true}).click();
+    await planningImage(page,"합성 빨간 원본","red");
+    await page.waitForFunction(()=>document.querySelector('.source-scroll canvas')?.width===80);
+    await page.getByRole("button",{name:"분석 영역 드래그 선택",exact:true}).click();
+    const canvasBox=await page.locator('.source-scroll canvas').boundingBox();
+    await page.mouse.move(canvasBox.x+canvasBox.width*.25,canvasBox.y+canvasBox.height*.25);await page.mouse.down();
+    await page.mouse.move(canvasBox.x+canvasBox.width*.75,canvasBox.y+canvasBox.height*.75);await page.mouse.up();
+    assert.equal(await page.locator('[name="crop-x"]').inputValue(),"0.25");assert.equal(await page.locator('[name="crop-width"]').inputValue(),"0.5");
+    for(const [key,value] of [["x","0.25"],["y","0.25"],["width","0.5"],["height","0.5"]])await page.locator('[name="crop-'+key+'"]').fill(value);
+    await page.getByRole("button",{name:"분석 영역 좌표 적용",exact:true}).click();
+    await page.getByRole("button",{name:"원본 회전 90°",exact:true}).click();
+    const original=await planningIntent(page,"원본 분석 · AI초안작성","선택 영역 분석","/api/planning-assets/extract");
+    assert.deepEqual(original.view.crop,[.25,.25,.5,.5]);assert.equal(original.view.rotation,90);assert.deepEqual(original.regions[0].bbox,[.25,.5,.25,.25]);
+    const regionEditor=page.locator('details').filter({has:page.locator('summary').filter({hasText:/^영역·전사 직접 편집$/})});
+    await regionEditor.locator("summary").first().click();
+    await regionEditor.locator('[name="coords"]').fill("0.1,0.2,0.3,0.4");
+    await page.locator('[name="region-note"]').fill("PO가 글자 경계를 직접 검토");
+    const edited=await planningPost(page,"/api/planning-assets/regions",()=>page.getByRole("button",{name:"새 영역 검토본 저장",exact:true}).click());
+    assert.notEqual(edited.id,original.id);assert.deepEqual(edited.regions[0].bbox,[.1,.2,.3,.4]);
+    await page.getByRole("button",{name:"이 분석을 스토리 입력에 추가",exact:true}).click();
+    await planningImage(page,"합성 파란 원본","blue");
+    const second=await planningIntent(page,"원본 분석 · AI초안작성","두 번째 원본 분석","/api/planning-assets/extract");
+    await page.getByRole("button",{name:"이 분석을 스토리 입력에 추가",exact:true}).click();
+    await page.locator('.analysis-order-entry').last().getByRole("button",{name:"입력 위로",exact:true}).click();
+    assert.deepEqual(await page.locator('.analysis-order-entry').evaluateAll(rows=>rows.map(r=>r.dataset.extractionId)),[second.id,edited.id]);
+    const draft=await planningIntent(page,"AI초안작성 · 새 후보/재분석","합성 파란 원본 우선 비교","/api/story-drafts");
+    assert.deepEqual(draft.extraction_ids,[second.id,edited.id]);assert.equal(draft.stories[0].provenance.actor.asset_id,second.asset_id);
+    await page.screenshot({path:"test-results/stage2-source-order.png",fullPage:true});assert.deepEqual(errors,[]);
+  } catch(error){console.error("Planning failure notice:",await page.locator("#notice").textContent());await page.screenshot({path:"test-results/planning-failure-"+Date.now()+".png",fullPage:true});throw error;} finally {await ctx.close();}
+});
+test("browser: original replacement opens explicit recovery preserving PO edits and historical source",async()=>{
+  const {ctx,page,errors}=await login("po");
+  try {
+    await page.click('[data-stage="definition"]');await page.getByRole("button",{name:"2.2 사용자스토리정의",exact:true}).click();
+    const asset=await planningImage(page,"합성 교체 대상 원본","green");
+    const run=await planningIntent(page,"원본 분석 · AI초안작성","교체 전 분석","/api/planning-assets/extract");
+    await page.getByRole("button",{name:"이 분석을 스토리 입력에 추가",exact:true}).click();
+    const draft=await planningIntent(page,"AI초안작성 · 새 후보/재분석","교체 전 스토리 합성","/api/story-drafts");
+    const candidate=page.locator('.planning-review details').filter({hasText:"교체 전 스토리 합성"}).last();await candidate.locator("summary").click();
+    const story=await planningPost(page,"/api/story-drafts/apply",()=>candidate.getByRole("button",{name:"새 스토리 초안으로 채택",exact:true}).click());
+    await page.locator('[name="value"]').fill("보존할 PO 수정 가치");
+    const poEdit=await planningPost(page,"/api/stories/update",()=>page.getByRole("button",{name:"초안 저장",exact:true}).click());
+    await page.locator('[name="planning-source"]').selectOption(asset.id);
+    await page.getByText("원본 교체 · 이전 버전 보존",{exact:true}).click();
+    await page.setInputFiles('[name="revision-file"]',{name:"synthetic-revision.md",mimeType:"text/markdown",buffer:Buffer.from("변경된 원본: 자동 변경을 허용하지 않음")});
+    await planningPost(page,"/api/planning-assets",()=>page.getByRole("button",{name:"원본 새 버전 저장",exact:true}).click());
+    await page.getByRole("button",{name:"재검토 필요 · "+story.id.slice(0,12),exact:true}).click();
+    await page.getByRole("button",{name:"이전·현재 원본 비교",exact:true}).click();
+    await page.getByText("변경된 원본: 자동 변경을 허용하지 않음",{exact:true}).waitFor();
+    await page.locator('[name="source-review-note"]').fill("이전 그림과 현재 변경 조건을 비교");await page.locator('[name="source-review-ack"]').check();
+    const recovered=await planningPost(page,"/api/stories/recover",()=>page.getByRole("button",{name:"PO 편집을 유지한 재검토 초안 저장",exact:true}).click());
+    assert.equal(recovered.id,story.id);assert.equal(recovered.version,poEdit.version+1);assert.equal(recovered.definition_status,"draft");
+    assert.equal(await page.locator('[name="value"]').inputValue(),"보존할 PO 수정 가치");assert.equal(recovered.source_refs.find(r=>r.id===asset.id).version,2);
+    assert.equal(recovered.provenance.actor.asset_version,1);assert.equal(recovered.provenance.actor.historical_source,true);assert.equal(recovered.provenance.actor.extraction_id,run.id);
+    assert.ok(recovered.questions.some(q=>q.critical&&q.status==="unanswered"&&q.id.startsWith("source-review-")));
+    await page.getByRole("button",{name:"원본 추출 · 원본 영역 보기",exact:true}).click();await page.locator('canvas[aria-label="이전 원본 v1"]').waitFor();
+    await page.screenshot({path:"test-results/stage2-source-recovery.png",fullPage:true});assert.deepEqual(errors,[]);
+  } catch(error){console.error("Planning failure notice:",await page.locator("#notice").textContent());await page.screenshot({path:"test-results/planning-failure-"+Date.now()+".png",fullPage:true});throw error;} finally {await ctx.close();}
+});
+
+test("browser: scoped research forms preserve PO edits, select a pack and show readiness gaps on mobile",async()=>{
+  const {ctx,page,errors}=await login("po");
+  try{
+    await page.locator(".sidebar details summary").filter({hasText:"프로젝트 추가"}).click();
+    await page.fill("#project-title","Synthetic Stage 1 UI");
+    await page.locator("#project-create button").click();
+    await page.waitForFunction(()=>document.querySelector("#project-name").textContent.includes("Synthetic Stage 1 UI"));
+    await nav(page,"research-workspace");
+    await page.getByRole("button",{name:"새 조사 브리프",exact:true}).click();
+    await page.getByLabel("산출물 제목",{exact:true}).fill("Synthetic research brief");
+    for(const label of ["제품·시장·대상 범위","지금 결정할 질문","제외 범위와 이유","결정 책임자","필요 시점·단계"]){
+      await page.getByLabel(label+" · 검토 시 필수",{exact:true}).fill("Synthetic UI fixture; not actual research");
+    }
+    await page.getByLabel("수행할 조사 작업",{exact:true}).selectOption(["RS-00"]);
+    await page.getByLabel("변경·검토 이유",{exact:true}).fill("Synthetic contract review");
+    let response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/items")&&r.request().method()==="POST");
+    await page.getByRole("button",{name:"초안 저장",exact:true}).click();
+    assert.equal((await response).status(),201);
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/items/review"));
+    await page.getByRole("button",{name:"내용 저장 후 검토 완료",exact:true}).click();
+    assert.equal((await response).status(),201);
+    await page.getByLabel("작성할 산출물",{exact:true}).selectOption("hypothesis");
+    await page.getByRole("button",{name:"새 산출물",exact:true}).click();
+    await page.getByLabel("산출물 제목",{exact:true}).fill("Synthetic hypothesis draft");
+    await page.getByLabel("적용 여부",{exact:true}).selectOption("not_applicable");
+    await page.getByLabel("해당 없음의 이유",{exact:true}).fill("This UI fixture does not assert customer research.");
+    await page.getByLabel("변경·검토 이유",{exact:true}).fill("Synthetic test of review consistency");
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/items")&&r.request().method()==="POST");
+    await page.getByRole("button",{name:"초안 저장",exact:true}).click();
+    assert.equal((await response).status(),201);
+    await page.getByLabel("해당 없음의 이유",{exact:true}).fill("");
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/items/review"));
+    await page.getByRole("button",{name:"내용 저장 후 검토 완료",exact:true}).click();
+    assert.equal((await response).status(),409);
+    await page.locator("#notice").filter({hasText:"해당 없음의 이유가 필요합니다."}).waitFor();
+    await page.getByLabel("해당 없음의 이유",{exact:true}).fill("This UI fixture does not assert customer research.");
+    await page.getByLabel("산출물 제목",{exact:true}).fill("PO edit immediately before review");
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/items/review"));
+    await page.getByRole("button",{name:"내용 저장 후 검토 완료",exact:true}).click();
+    const reviewed=await response;assert.equal(reviewed.status(),201);
+    assert.equal((await reviewed.json()).title,"PO edit immediately before review");
+    await page.getByRole("button",{name:"편집 닫기",exact:true}).click();
+    await page.getByLabel("묶음 제목",{exact:true}).fill("Synthetic research pack");
+    await page.getByRole("button",{name:"검토 산출물 모두 선택",exact:true}).click();
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/packs"));
+    await page.getByRole("button",{name:"선택한 버전으로 묶음 저장",exact:true}).click();
+    assert.equal((await response).status(),201);
+    await page.locator("#research-workspace details summary").filter({hasText:"Synthetic research pack"}).click();
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/select"));
+    await page.getByRole("button",{name:"PRD 작성에 이 버전 사용",exact:true}).click();assert.equal((await response).status(),201);
+    await page.locator("#research-workspace details summary").filter({hasText:"Synthetic research pack"}).click();
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/gate"));
+    await page.getByRole("button",{name:"연구 준비 검사",exact:true}).click();
+    const checked=await response;assert.equal(checked.status(),201);assert.equal((await checked.json()).ready,false);
+    await page.getByText("보완이 필요합니다",{exact:true}).waitFor();
+    await page.screenshot({path:"test-results/stage1-research-desktop.png",fullPage:true});
+    await page.setViewportSize({width:390,height:844});
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+    await page.screenshot({path:"test-results/stage1-research-mobile.png",fullPage:true});
+    assert.deepEqual(errors,[]);
+  }catch(error){console.error("Stage 1 notice:",await page.locator("#notice").textContent());await page.screenshot({path:"test-results/stage1-failure.png",fullPage:true});throw error;}finally{await ctx.close();}
 });

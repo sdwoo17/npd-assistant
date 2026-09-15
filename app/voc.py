@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import uuid
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -106,8 +107,11 @@ class Voc:
             raise AppError("VoC는 UTF-8 CSV 파일이어야 합니다.")
         source_name = text(body, "source_name", 100)
         rows, errors = parse_csv(original, self.features(p))
-        saved = self.store.put(p, "voc_source", {"filename": filename, "encrypted_text": self.store.encrypt(original),
-            "encrypted_source_name": self.store.encrypt(source_name), "source_name": redact(source_name), "hash": digest})
+        archive_id = str(uuid.uuid4())
+        storage = self.archive_planning_blob(user, archive_id, self.store.encrypt(body["content_base64"]))
+        self.planning_actor(user)
+        saved = self.store.put(p, "voc_source", {"filename": filename, "storage": storage, "encrypted_text": self.store.encrypt(original),
+            "encrypted_source_name": self.store.encrypt(source_name), "source_name": redact(source_name), "hash": digest}, archive_id)
         results, count = [], 0
         for row in rows:
             external, index = row["external_id"], row.pop("row")

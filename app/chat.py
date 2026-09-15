@@ -7,6 +7,7 @@ from .contracts import text, optional, filters, strings, dependency_map, validat
 from .ingest import redact, retrieve
 from .voc import inferred_filters
 from .store import AppError
+from .research_workflow import internal_amazon_request
 
 MAX_PARTICIPANTS = 8
 
@@ -115,6 +116,10 @@ class Chat:
             if previous["fingerprint"] != fingerprint:
                 raise AppError("같은 요청 ID에 다른 내용이 입력됐습니다.", 409)
             return self.conversation(user, conv["id"])
+        if internal_amazon_request(question):
+            response = {"speaker":"system", "text":"아마존의 비공개 내부 정보에 대해서는 답변하기 어렵습니다. 공개된 자료를 기준으로 질문해 주세요.",
+                "evidence_ids":[], "assumptions":[], "dependencies":[], "status":"restricted_information", "model":None}
+            return self.persist_turn(user, conv, question, [response], [], request_id, fingerprint, epoch, {})
         history = [m for m in conv["messages"] if not m.get("redacted")]
         if len(history) >= 1000 or sum(len(m["text"]) for m in history) + len(question) > 160000:
             raise AppError("대화 처리 한도입니다. 기존 내용을 내보내고 새 기획 대화를 시작하세요.", 409)
