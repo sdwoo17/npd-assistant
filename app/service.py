@@ -65,6 +65,7 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, Plannin
             self._model_probe_lock.release()
 
     def knowledge(self, project):
+        from .research_provenance import derived_nature
         sources = {r["id"]: r for r in self.store.list(project, "source")}
         taxonomy = self.features(project)
         insights = []
@@ -80,9 +81,11 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, Plannin
             row.update(evidence_category=r.get('evidence_category','SYNTHETIC_FGI' if r.get('evidence_type')=='synthetic' else 'ATTACHMENT_STATEMENT'),
                 source_locator=r.get('source_locator',{'status':'NEEDS_REVIEW','parts':[]}),
                 source_family_id=r.get('source_family_id',''),claim_status=r.get('claim_status','UNVERIFIED'))
+            row.update(derived_nature([source,r]))
             insights.append(row)
         voc = [{k: r.get(k, "") for k in ("id", "kind", "version", "text", "feature", "feature_ids", "service_id", "segment", "evidence_type",
             "external_id", "occurred_at", "collected_at", "source_type", "source_name", "source_url", "app_id", "rating", "problem", "need")} for r in self.voc_records(project)]
+        for r in voc:r.update(derived_nature([r]))
         for r in insights + voc:
             r["feature_names"] = " ".join(taxonomy[f]["name"] for f in r["feature_ids"] if f in taxonomy)
             r["feature_terms"] = " ".join(t for f in r["feature_ids"] if f in taxonomy for t in taxonomy[f]["terms"])
@@ -245,7 +248,7 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, Plannin
                     lines.extend(["### " + section["title"], "문단 ID: " + section["id"], section["text"]])
         lines.extend(["", "## 근거 목록"])
         for e in package["evidence"]:
-            lines.extend(["", "["+e["id"]+"] v" + str(e["version"]) + " · " + e["evidence_type"], e["text"]])
+            lines.extend(["", "["+e["id"]+"] v" + str(e["version"]) + " · " + e["evidence_type"]+" · 자료 성격: "+e.get("evidence_nature","UNVERIFIED"), e["text"]])
             if e.get("occurred_at"):
                 lines.append("관찰 시각: " + e["occurred_at"])
             if e.get("external_id"):
@@ -258,6 +261,8 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, Plannin
         parsed = urlparse(route)
         path, query = parsed.path, {k: v[-1] for k, v in parse_qs(parsed.query).items()}
         p = user["project_id"]
+        if path.startswith('/api/research-workspace/history/'):
+            return self.research_item_history(user,path.rsplit('/',1)[-1])
         if path == '/api/research-workspace':
             return self.research_workspace(user)
         if path == '/api/research-workspace/impact':
@@ -338,8 +343,11 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, Plannin
         raise AppError("경로를 찾을 수 없습니다.", 404)
 
     def post(self, user, route, body):
+        if user.get("role") not in ("owner","po"):raise AppError("조회 권한으로 변경·확정할 수 없습니다.",403)
         p = user["project_id"]
         routes = {"/api/research/upload": self.research_upload, "/api/research/extract": self.research_extract,
+            '/api/research-workspace/interview/start':self.start_po_interview,
+            '/api/research-workspace/interview/apply':self.apply_po_interview,
             '/api/research-workspace/items':self.save_research_item,
             '/api/research-workspace/generate':self.generate_research_item,
             '/api/research-workspace/items/review':self.review_research_item,

@@ -10,6 +10,7 @@ from .contracts import text, optional, strings, revision, public_url, validate_c
 from .model import NoRedirect
 from .stories import lineage
 from .store import AppError
+from .research_provenance import derived_nature, synthetic_record
 
 
 def internal_amazon_request(value):
@@ -29,7 +30,7 @@ class ResearchWorkflow:
         assets=[self.asset(user,text(r,'id',80),revision({'expected_version':r.get('version')})) for r in refs]
         if any(r['media_type']!='document' or r['purpose']!='existing_service' for r in assets):
             raise AppError('기존 서비스 PRD·매뉴얼 문서를 선택하세요.')
-        documents=[{'asset_id':r['id'],'version':r['version'],'text':self.store.decrypt(r['encrypted_text'])} for r in assets]
+        documents=[{'asset_id':r['id'],'version':r['version'],'source_nature':r.get('source_nature','UNVERIFIED'),'text':self.store.decrypt(r['encrypted_text'])} for r in assets]
         if sum(len(r['text']) for r in documents)>120000:raise AppError('분석 문서를 120,000자 이하로 나눠 주세요.')
         if internal_amazon_request(prompt):raise AppError('아마존의 비공개 내부 정보에 대해서는 답변하기 어렵습니다. 공개 자료를 기준으로 질문해 주세요.',403)
         result=self.generate('service_baseline',{'prompt':prompt,'documents':documents})
@@ -49,7 +50,7 @@ class ResearchWorkflow:
         return self.store.write(p,inserts=[('research_result',{'title':result['title'],'category':'existing_service',
             'text':'\n'.join(lines),'sections':sections,'questions':unknowns,'state':'draft','evidence_ids':[],
             'source_refs':refs,'dependencies':lineage(assets),'prompt':prompt,'model':self.model.model,
-            'evidence_type':'planning_context','created_by':user['id']},'RSC-'+uuid.uuid4().hex)],expected_epoch=epoch)[0]
+            'evidence_type':'planning_context',**derived_nature(assets),'created_by':user['id']},'RSC-'+uuid.uuid4().hex)],expected_epoch=epoch)[0]
 
     def save_research_result(self, user, body):
         p=user['project_id'];epoch=self.store.epoch(p)
@@ -75,6 +76,7 @@ class ResearchWorkflow:
             'source_refs':[{'id':a['id'],'version':a['version']} for a in assets],
             'message_ids':[m['id'] for m in messages],'evidence_type':'submitted_fgi_report' if category=='fgi_actual' else 'analysis',
             'customer_validation':'unverified','created_by':user['id']}
+        fields.update(derived_nature(assets+messages+[e for e in self.knowledge(p) if e['id'] in evidence_ids]))
         self.planning_actor(user)
         return self.store.write(p,inserts=[('research_result',fields,'RSC-'+uuid.uuid4().hex)],expected_epoch=epoch)[0]
 
@@ -87,7 +89,10 @@ class ResearchWorkflow:
         actual=body.get('actual_customer_data',row.get('actual_customer_data',False))
         if type(actual) is not bool or (actual and row['category']!='fgi_actual'):
             raise AppError('실제 고객 조사 여부를 확인하세요.')
-        changes={'text':content,'state':'reviewed','actual_customer_data':actual,
+        sources=[self.asset(user,r['id'],r['version']) for r in row.get('source_refs',[])]
+        nature=derived_nature([row]+sources)
+        if actual and nature['contains_synthetic']:raise AppError('합성 자료를 실제 고객 조사로 확인할 수 없습니다.',409)
+        changes={**nature,'text':content,'state':'reviewed','actual_customer_data':actual,
             'reviewed_by':user['id'],'review_reason':optional(body,'reason',3000),
             'canonical_version':'research-result.v2'}
         if row['category']=='existing_service':

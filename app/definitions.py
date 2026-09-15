@@ -7,6 +7,7 @@ from .story_contracts import DEFINITION_STAGES, objects
 from .stories import lineage
 from .store import AppError, timestamp
 from .research_contracts import PRD_SECTIONS
+from .research_provenance import derived_nature
 
 
 class Definitions:
@@ -101,7 +102,9 @@ class Definitions:
             answer=optional(q,'answer',3000);status=q.get('status','unanswered')
             if status not in ('unanswered','answered','excluded') or (status!='unanswered' and not answer):
                 raise AppError('확인 질문의 답변 또는 제외 사유를 기록하세요.')
-            questions.append({'text':text(q,'text',3000),'answer':answer,'status':status,
+            needed=q.get('needed_stage','DEVELOPMENT')
+            if needed not in ('RESEARCH','DEVELOPMENT','RELEASE'):raise AppError('질문의 해결 필요 시점을 확인하세요.')
+            questions.append({'needed_stage':needed,'text':text(q,'text',3000),'answer':answer,'status':status,
                 'owner':optional(q,'owner',200),'next_action':optional(q,'next_action',3000)})
         stories=[]
         for ref in objects(body.get('story_refs',[]),100,'스토리 연결'):
@@ -113,6 +116,7 @@ class Definitions:
         fields={'stage':stage,'title':text(body,'title',200),'sections':sections,'questions':questions,
             'assumptions':strings(body.get('assumptions',[]),40,3000),
             'story_refs':[{'id':r['id'],'version':r['version']} for r in stories]}
+        fields.update(derived_nature(stories+[evidence[rid] for rid in ids]+pack_rows))
         if pack:fields.update(research_pack_ref={'id':pack['id'],'version':pack['version']},research_id=pack['research_id'])
         return fields,lineage(stories+[evidence[rid] for rid in ids]+([pack] if pack else []))
 
@@ -126,6 +130,7 @@ class Definitions:
             pack,_=self.selected_research(user)
             if pack:data['research_pack_ref']={'id':pack['id'],'version':pack['version']}
         fields,deps=self.definition_fields(user,data)
+        fields.update(derived_nature([fields]+([old] if old else [])))
         fields.update(state='draft',dependencies=(old.get('dependencies',[]) if old else [])+deps,
             authored_by=user['id'],confirmed_version=old.get('confirmed_version') if old else None)
         self.planning_actor(user)
@@ -150,6 +155,7 @@ class Definitions:
             'questions':[{'text':q,'status':'unanswered','answer':''} for q in result['questions']],
             'story_refs':[{'id':r['id'],'version':r['version']} for r in context['stories']]})
         records=[r for group in context.values() for r in group]+evidence
+        fields.update(derived_nature(records))
         fields.update(state='draft',dependencies=lineage(records)+deps+dependency_map(prior),prompt=prompt,prompt_version='stage2-draft-v1',
             model=self.model.model,authorship='ai_proposed',authored_by=user['id'],confirmed_version=None)
         self.planning_actor(user)
@@ -158,6 +164,8 @@ class Definitions:
     def definition_readiness(self, user, body):
         row=self.definition(user,text(body,'document_id',80))
         if row['version']!=revision(body):raise AppError('문서 버전을 확인하세요.',409)
+        stage=body.get('stage','research')
+        if stage not in ('research','development'):raise AppError('준비 검사 단계를 확인하세요.')
         errors=[];coverage=[];research=None
         for sid,title in PRD_SECTIONS.items():
             section=next((s for s in row['sections'] if s['id']==sid),None)
@@ -173,6 +181,8 @@ class Definitions:
                 'stage':body.get('stage','research')})
             errors+=research['errors']
         for q in row['questions']:
+            if stage=='development' and q['status']=='unanswered' and q.get('needed_stage','DEVELOPMENT') in ('RESEARCH','DEVELOPMENT'):
+                errors.append('개발 전 미결 질문: '+q['text'])
             if q['status']=='unanswered' and not (q.get('owner') and q.get('next_action')):
                 errors.append('미결 질문의 책임자·후속 조사를 지정하세요.')
         return {'document_id':row['id'],'version':row['version'],'ready':not errors,
@@ -200,7 +210,7 @@ class Definitions:
             # Native PRD remains a separate versioned artifact with the same evidence closure.
             prd_id=str(uuid.uuid4())
             inserts.append(('prd',{'title':row['title'],'sections':[{k:s[k] for k in ('id','title','text')} for s in row['sections']],
-                'dependencies':row['dependencies'],'definition_id':row['id'],'definition_version':expected+1,
+                **derived_nature([row]),'dependencies':row['dependencies'],'definition_id':row['id'],'definition_version':expected+1,
                 'created_by':user['id']},prd_id))
             updates[0][2]['prd_id']=prd_id
         selection=next((s for s in self.store.list(p,'planning_selection') if s['stage']==row['stage']),None)
@@ -219,6 +229,7 @@ class Definitions:
             raise AppError('내보낼 확정 문서 버전을 확인하세요.',409)
         story_export=self.story_package(user,{'stories':row['story_refs']}) if row['story_refs'] else None
         document={k:row[k] for k in ('id','version','stage','title','sections','assumptions','questions','story_refs','confirmed_at')}
+        document.update(derived_nature([row]))
         if row.get('research_pack_ref'):document['research_pack_ref']=row['research_pack_ref']
         package={'schema_version':'npd.definition-package.v1','document':document,
             'stories':story_export['package']['stories'] if story_export else [],
@@ -227,7 +238,7 @@ class Definitions:
         if row.get('research_pack_ref'):
             ref=row['research_pack_ref']
             package['research']=self.research_handoff(user,{'pack_id':ref['id'],'expected_version':ref['version']})['package']
-        lines=['# '+row['title'],package['disclosure'],row['id']+' v'+str(row['version'])]
+        lines=['# '+row['title'],'자료 성격: '+document['evidence_nature'],package['disclosure'],row['id']+' v'+str(row['version'])]
         for section in row['sections']:
             lines.extend(['','## '+section['title'],section['text'],' '.join('['+rid+']' for rid in section['evidence_ids'])])
         lines+=['가정: '+s for s in row['assumptions']]

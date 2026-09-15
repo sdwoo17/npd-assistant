@@ -1092,3 +1092,5 @@ form [type="submit"] {
 #research-workspace label { display: block; margin-top: .75rem; }
 #research-workspace button { margin: .3rem; white-space: normal; }
 #research-workspace .planning-list { max-height: 18rem; overflow: auto; }
+
+#research-workspace fieldset { min-width: 0; max-width: 100%; box-sizing: border-box; }

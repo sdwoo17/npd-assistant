@@ -7,7 +7,7 @@ import math
 from .contracts import optional, strings
 from .store import AppError
 
-SCHEMA_VERSION = 'npd.research.v1'
+SCHEMA_VERSION = 'npd.research.v2'
 EVIDENCE_TYPES = ('PUBLIC_FACT','ATTACHMENT_STATEMENT','INTERNAL_MEASUREMENT','REAL_VOC',
                   'SYNTHETIC_FGI','ASSUMPTION','USER_REQUIREMENT')
 PRD_SECTIONS = {
@@ -43,6 +43,9 @@ def field(label, kind='text', required=True, options=None):
     return {'label':label,'type':kind,'required':required, **({'options':options} if options else {})}
 def enum(label, options, required=True):
     return field(label,'select',required,options)
+def rows(label, columns, required=False):
+    return {'label':label,'type':'rows','required':required,'columns':columns,'max_rows':100}
+
 def fields(**values):
     return {k: field(v) if isinstance(v,str) else v for k,v in values.items()}
 
@@ -149,6 +152,58 @@ TYPES = {
     owner='결정 책임자',reason='유지·변경 제안 이유',limitations='미검증 조건·후속 시험'),
 }
 
+# Detailed service contracts are optional for reading legacy text records, but
+# required when a selected SV-02 task claims structured research readiness.
+TYPES['service_baseline'].update(fields(
+    detail_level=enum('분석 구조',['LEGACY_TEXT','STRUCTURED'],False),
+    service_version=field('서비스 기준 버전',required=False),
+    document_as_of=field('문서 운영 기준일',required=False),data_as_of=field('운영 수치 집계 시점·미확인 이유',required=False),
+    feature_matrix=rows('기능별 현재 제공 상태',fields(id='기능 ID',name='기능',
+        state=enum('제공 상태',['UNKNOWN','CURRENT','UNSUPPORTED','PROPOSED','RETIRED']),
+        scope='시장·계정·형식·인터페이스',as_of='적용 기준일·미확인 이유',source_locator='문서 위치',limitations='제약·예외'),True),
+    role_matrix=rows('역할별 권한',fields(id='역할 ID',role='역할',allowed='허용 동작',denied='금지 동작',approval='추가 승인 조건·없음',source_locator='문서 위치'),True),
+    state_models=rows('업무·심사·실행 상태',fields(id='상태 모델 ID',object='업무 객체',states='상태와 전이',
+        success_evidence='실제 성공을 확인할 증거',failure='실패·지연·결과 미확인',source_locator='문서 위치'),True),
+    data_contracts=rows('업무 데이터와 운영 의존성',fields(id='데이터 ID',object='업무 객체·이벤트',
+        key='식별자·중복 기준',event_time='발생·수신·유효 시각',permission='조회·수정 범위',
+        dependency='외부 의존성·책임자',failure='빈값·실패·미확인 처리',source_locator='문서 위치'),True),
+    metric_definitions=rows('지표의 집계 조건',fields(id='지표 ID',name='지표',numerator='분자',denominator='분모',unit='단위',
+        grain='계정·사용자·상품 등 집계 단위',cohort='대상 집단·필터',period='측정 기간·시간대',
+        attribution='귀속·중복·제외',maturity='집계 시점·잠정/확정',zero_rule='분모 0·실패 처리',
+        interpretation='해석 한계·인과와의 구별',source_locator='문서 위치'),True),
+    open_topics=rows('PO 확인 질문',fields(id='질문 ID',question='확인 질문',owner='담당 역할',
+        needed_stage=enum('필요 단계',['RESEARCH','DEVELOPMENT','RELEASE']),next_action='확인 방법·시점'),False)))
+
+TYPES['po_interview']=fields(
+    run_state=enum('인터뷰 실행',['NOT_RUN','EXECUTED']),nature=enum('인터뷰 자료 성격',['SYNTHETIC','PO_REPORTED']),
+    purpose='인터뷰 목적',limitations='검증 한계·다음 확인',
+    answers=rows('문서와 대조할 질문·답변',fields(id='질문 ID',question='질문',
+        status=enum('답변 상태',['OPEN','ANSWERED','DEFERRED']),answer=field('답변',required=False),
+        respondent_role=field('답변자 역할',required=False),confirmed_at=field('확인 날짜',required=False),
+        effective_at=field('변경 적용일·미확인 이유',required=False),scope=field('적용 대상·예외',required=False),
+        classification=enum('문서와의 관계',['UNVERIFIED','DOCUMENT_CONFIRMED','OPERATION_CHANGE','DOCUMENT_CORRECTION','EXCEPTION','FUTURE_REQUEST']),
+        evidence_note=field('추가 근거·없음·추가 확인',required=False),
+        target_field=enum('반영할 분석 항목',['as_is','proposed','states','exceptions','permissions','pain_points','unknowns','roles','jobs']),
+        proposed_text=field('검토할 반영 문장',required=False),owner='후속 확인 책임자',
+        needed_stage=enum('필요 단계',['RESEARCH','DEVELOPMENT','RELEASE']),next_action='후속 확인·완료 이유'),True))
+TYPES['calculation']=fields(
+    formula=enum('계산 방식',['RATIO_OF_SUMS','PERCENT_OF_SUMS']),measurement_state=enum('입력 자료 상태',['UNKNOWN','SYNTHETIC','OBSERVED']),
+    numerator='분자의 의미·단위',denominator='분모의 의미·단위',unit='결과 단위',population='대상·집계 단위',
+    period='같은 측정 기간·시간대',comparability='합산 가능한 이유·중복 제외',maturity='귀속·관측 기간·잠정 여부',
+    unknown_reason=field('미측정·결측 이유',required=False),owner='검토 책임자',
+    terms=rows('합산할 분자와 분모',fields(id='입력 ID',numerator=field('분자 값','number',False),
+        denominator=field('분모 값','number',False),source_id='선택한 근거 ID',source_locator='원문 위치'),True))
+TYPES['funnel']=fields(measurement_state=enum('입력 자료 상태',['UNKNOWN','SYNTHETIC','OBSERVED']),
+    population='시작 집단과 집계 단위',period='시작일 범위',observation_window='각 대상의 관측 기간·성숙도',
+    nesting_confirmed=field('각 단계는 앞 단계의 부분집합임을 확인','checkbox'),deduplication='독립 대상·중복 판정',
+    limitations='이탈 원인·다른 집단 일반화의 한계',unknown_reason=field('미측정 이유',required=False),owner='검토 책임자',
+    stages=rows('누적 도달 단계',fields(id='단계 ID',label='단계',count=field('독립 대상 수','number',False)),True))
+TYPES['voc_coding']=fields(codebook_version='코드북 버전',population='대상·포함 기준',period='수집 기간',
+    privacy='가명 키·동의·보관 범위',limitations='대표성·코딩 한계',owner='검토 책임자',
+    records=rows('발언별 코딩',fields(id='발언 키',participant_key=field('가명 참여자 키·모르면 비움',required=False),
+        disposition=enum('집계 처리',['INCLUDED','EXCLUDED','DUPLICATE']),nature=enum('자료 성격',['SYNTHETIC','REAL']),
+        code='대표 코드',reason='분류·제외·중복 이유',source_id='선택한 근거 ID'),True))
+
 GRAPH_TYPES = {'evidence':'E','problem':'I','story_candidate':'US','requirement':'R',
                'acceptance':'AC','uat':'T','metric':'M'}
 
@@ -157,10 +212,18 @@ def clean_fields(output_type, data):
         raise AppError('조사 산출물 유형·내용을 확인하세요.')
     if set(data)-set(TYPES[output_type]):
         raise AppError('지원하지 않는 산출물 필드가 있습니다.')
+    return clean_values(TYPES[output_type],data)
+
+def clean_values(schema,data):
+    if not isinstance(data,dict) or set(data)-set(schema):raise AppError('지원하지 않는 구조화 필드입니다.')
     result={}
-    for key,spec in TYPES[output_type].items():
+    for key,spec in schema.items():
         value=data.get(key)
-        if spec['type']=='number':
+        if spec['type']=='rows':
+            if value is None:value=[]
+            if not isinstance(value,list) or len(value)>spec['max_rows']:raise AppError(spec['label']+'은 100행 이내로 작성하세요.')
+            result[key]=[clean_values(spec['columns'],v) for v in value]
+        elif spec['type']=='number':
             if value is not None and (type(value) not in (int,float) or not math.isfinite(value)):
                 raise AppError(spec['label']+'은 유한한 숫자 또는 미측정이어야 합니다.')
             result[key]=value
@@ -180,8 +243,11 @@ def content_errors(row):
         return [] if row.get('na_reason','').strip() else ['해당 없음의 이유가 필요합니다.']
     data=row['fields'];kind=row['output_type'];errors=[]
     for key,spec in TYPES[kind].items():
+        if kind=='service_baseline' and spec['type']=='rows' and data.get('detail_level')!='STRUCTURED':continue
         if spec['required'] and (data.get(key) is None or data.get(key)=='' or data.get(key)==[]):
             errors.append(spec['label']+'을 작성하세요.')
+    from .research_details import detail_errors
+    errors.extend(detail_errors(row,TYPES))
     if kind=='brief' and (not data['required_tasks'] or any(t not in TASKS for t in data['required_tasks'])):
         errors.append('유효한 필수 조사 작업을 선택하세요.')
     if kind=='numeric_claim' and data.get('source_kind')!=data.get('claim_kind'):
@@ -231,8 +297,15 @@ def render_item(row):
     lines=[]
     if row.get('conflict_ids'):
         lines.append('연결된 충돌: '+', '.join(row['conflict_ids'])+' · 적용 주장 상태: '+row['effective_claim_status'])
+    if row.get('evidence_nature'):lines.append('자료 성격: '+row['evidence_nature'])
+    if row.get('computed'):lines.append('서버 계산: '+__import__('json').dumps(row['computed'],ensure_ascii=False))
     for key,spec in TYPES[row['output_type']].items():
         value=row['fields'].get(key)
+        if spec['type']=='rows':
+            lines.append(spec['label']+':')
+            for entry in value or []:
+                lines.append(' | '.join(c['label']+': '+str(entry.get(k) if entry.get(k) is not None else '미측정') for k,c in spec['columns'].items()))
+            continue
         if value is None:value='미측정'
         if isinstance(value,list):value=' / '.join(value)
         if isinstance(value,bool):value='예' if value else '아니오'

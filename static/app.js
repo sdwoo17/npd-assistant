@@ -291,6 +291,7 @@ async function showEvidence(id) {
     ),
   );
   for (const key of [
+    "evidence_nature",
     "source_name",
     "external_id",
     "occurred_at",
@@ -1289,6 +1290,7 @@ $("research-upload").onsubmit = guard(async () => {
     await api("/api/research/upload", {
       ...(await fileBody($("research-file"))),
       title: $("source-title").value,
+      source_nature: $("research-source-nature").value,
       ...(id
         ? {
             source_id: id,
