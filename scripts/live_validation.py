@@ -76,13 +76,14 @@ def exercise_http(owner, po, marker, steps):
     call(owner,'/api/insights/release',{'insight_ids':[d['id'] for d in drafts],'published':True})
     call(owner,'/api/voc/upload',file('voc.csv',source_name='synthetic-live-validation'))
     voc=call(po,'/api/voc')['records']
-    call(po,'/api/voc/classify',{'voc_ids':[v['id'] for v in voc[:6]]})
+    call(po,'/api/voc/classify',{'voc_ids':[v['id'] for v in voc[:6]],'synthetic_mode':True})
     prd=call(po,'/api/prds/import',file('existing_service_prd.md',title='소재 분석 기준 기획'))
     research=call(po,'/api/conversations',{'title':'소재 비교 리서치','mode':'research','prd_id':prd['id']})
     call(po,'/api/chat',{'conversation_id':research['id'],'message':'소재 성과 비교를 위한 요구사항과 확인할 가설을 근거와 함께 설명해 주세요.','request_id':'research'})
     people=[]
     for name,segment in [('소형셀러검증','전담 분석가 없는 소규모 광고주 소재 리포트'),('대행사검증','고객 승인과 소재 변경 근거가 필요한 대행사 운영자')]:
-        people.append(call(po,'/api/personas/generate',{'name':name,'segment':segment}))
+        batch=call(po,'/api/personas/generate',{'name':name,'segment':segment})
+        people.extend(call(po,'/api/persona-candidates/adopt',{'batch_id':batch['id'],'expected_version':batch['version'],'indices':[0]}))
     conv=call(po,'/api/conversations',{'title':'가상 광고주 FGI','mode':'interview','persona_ids':[p['id'] for p in people],'prd_id':prd['id']})
     tags=' '.join('@'+p['alias'] for p in people)
     first=call(po,'/api/chat',{'conversation_id':conv['id'],'message':tags+' 소재 추천 근거에서 어떤 비교 조건과 승인 절차가 필요합니까?','request_id':'first'})

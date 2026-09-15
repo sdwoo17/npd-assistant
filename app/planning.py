@@ -1,4 +1,6 @@
 """Versioned persona, debrief and PRD domain operations."""
+import hashlib
+import json
 import re
 import unicodedata
 import uuid
@@ -110,7 +112,13 @@ class Planning:
             raise AppError("페르소나가 리서치와 VoC를 모두 연결하지 못했습니다. 다시 생성하세요.", 502)
         if body.get("name"):
             result["name"] = body["name"]
-        return self.save_persona(user, result, evidence, epoch, persist)
+        candidate=self.save_persona(user,result,evidence,epoch,False)
+        if not persist:return candidate
+        self.planning_actor(user)
+        return self.store.write(p,inserts=[('persona_batch',{'profile':segment,'candidates':[candidate],
+            'rationale':'공유 근거로 제안한 단일 초안입니다. 고객 문서를 선택하면 여러 프로필을 비교할 수 있습니다.',
+            'dependencies':candidate['dependencies'],'state':'draft','selected_indices':[],
+            'is_synthetic':True,'created_by':user['id']},None)],expected_epoch=epoch)[0]
 
     def make_debrief(self, user, body):
         p = user["project_id"]
@@ -119,6 +127,12 @@ class Planning:
         study = self.study(user, conv["study_id"]) if conv.get("study_id") else None
         if study and study["status"] == "completed":
             raise AppError("완료한 스터디의 검토본은 고정됩니다. 새 스터디에서 후속 검토하세요.", 409)
+        fingerprint=hashlib.sha256(json.dumps({'messages':[(m['id'],m.get('version',1)) for m in messages],
+            'dependencies':deps,'decisions':conv.get('decisions',[])},sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+        previous=[r for r in self.store.list(p,'debrief') if r.get('input_fingerprint')==fingerprint
+            and r['conversation_id']==conv['id'] and self.accessible(p,r)]
+        if previous and body.get('regenerate') is not True:return previous[-1]
+        reason=text(body,'reason',2000) if body.get('regenerate') is True else ''
         result = self.generate("debrief", {"conversation": messages, "evidence": evidence, "statistics": statistics,
             "decisions": conv.get("decisions", []), "study": self.study_context(user, conv)})
         answer = validate_answer(result, evidence, statistics)
@@ -130,7 +144,7 @@ class Planning:
                 validate_claims(row["text"], [by_id[eid] for eid in row["evidence_ids"]], statistics)
         answer["evidence_ids"] = sorted(set(answer["evidence_ids"]) | {eid for rows in groups.values() for row in rows for eid in row["evidence_ids"]})
         return self.store.write(p, inserts=[("debrief", {**answer, **groups, "text": inline_text(answer), "conversation_id": conv["id"],
-            "source_message_ids": [m["id"] for m in messages], "dependencies": deps, "model": self.model.model,
+            "source_message_ids": [m["id"] for m in messages], "input_fingerprint":fingerprint,"regeneration_reason":reason,"dependencies": deps, "model": self.model.model,
             "review_status": "needs_po_review", "is_synthetic": True}, None)], expected_epoch=epoch,
             updates=[("study", study["id"], {"stage": "debrief"}, study["version"])] if study else [],
             checks=[("conversation", conv["id"], conv["version"])])[0]

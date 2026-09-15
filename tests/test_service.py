@@ -114,7 +114,9 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.s.get(self.po, "/api/conversations/" + conv["id"])["messages"], [])
 
     def test_persona_generation_and_tag_followup(self):
-        p = self.s.post(self.po, "/api/personas/generate", {"segment": "소규모 광고주 소재 분석"})
+        batch = self.s.post(self.po, "/api/personas/generate", {"segment": "소규모 광고주 소재 분석"})
+        self.assertEqual(self.f.store.list(self.po["project_id"], "persona"), [])
+        p = self.s.post(self.po, "/api/persona-candidates/adopt", {"batch_id":batch["id"],"expected_version":batch["version"],"indices":[0]})[0]
         conv = self.f.conversation()
         first = self.s.post(self.po, "/api/chat", {"conversation_id": conv["id"], "message": "@" + p["alias"] + " 소재 추천을 어떻게 판단하나요?"})
         self.assertEqual(first["messages"][-1]["persona_id"], p["id"])

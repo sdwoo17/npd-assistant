@@ -1,4 +1,5 @@
 """Moderated interviews with pinned personas, complete bounded context and atomic turns."""
+from .research_provenance import derived_nature
 import hashlib
 import json
 import re
@@ -43,6 +44,8 @@ class Chat:
     def conversation(self, user, cid):
         p = user["project_id"]
         conv = self.store.get(p, "conversation", cid)
+        if conv.get("followup_ref") and not self.accessible(p,conv):
+            raise AppError("후속 분석의 FGI 검토본이 변경됐습니다. 현재 결과를 다시 연결하세요.",409)
         messages = []
         for m in self.store.list(p, "message"):
             if m["conversation_id"] != cid:
@@ -132,12 +135,14 @@ class Chat:
             if study:
                 raise AppError("스터디 세션에서는 참여자 풀이 고정됩니다. 페르소나 화면에서 별도로 생성하세요.", 409)
             person = self.generate_persona(user, {"segment": question, "name": body.get("persona_name", ""), "filters": conv.get("filters")}, persist=False)
-            # Persist the new persona and its complete chat turn in one transaction.
-            deps = dependency_map([person])
-            response = {"speaker": "system", "text": "가상 페르소나 @" + person["alias"] + " 생성 완료. 근거와 가정을 검토한 뒤 @태그로 인터뷰하세요.",
-                "evidence_ids": person["evidence_ids"], "assumptions": person["assumptions"], "is_synthetic": True,
-                "persona_id": person["id"], "persona_version": person["version"], "dependencies": deps, "status": "persona_created"}
-            return self.persist_turn(user, conv, question, [response], deps, request_id, fingerprint, epoch, {}, [("persona", person, person["id"])])
+            # A chat request produces a draft batch; activation requires explicit PO selection.
+            deps = person["dependencies"];bid=str(uuid.uuid4())
+            batch={'profile':question,'candidates':[person],'rationale':'채팅에서 요청한 검토용 프로필 초안',
+                'dependencies':deps,'state':'draft','selected_indices':[],'is_synthetic':True,'created_by':user['id']}
+            response = {"speaker":"system","text":"페르소나 초안을 준비했습니다. 페르소나 화면에서 근거·가정을 비교하고 등록할 초안을 선택하세요.",
+                "evidence_ids":person['evidence_ids'],"assumptions":person['assumptions'],"is_synthetic":True,
+                "persona_batch_id":bid,"dependencies":deps,"status":"persona_draft_created"}
+            return self.persist_turn(user,conv,question,[response],deps,request_id,fingerprint,epoch,{},[('persona_batch',batch,bid)])
         current = [r for r in self.store.list(p, "persona") if not r.get("archived") and self.accessible(p, r)]
         by_alias = {r["alias"]: r for r in current}
         pinned = []
@@ -173,6 +178,10 @@ class Chat:
             retrieval_question += " " + " ".join(m["text"] for m in history[-2:])
         evidence, search_info = self.search(p, retrieval_question, scope)
         knowledge = self.knowledge(p)
+        if conv.get('followup_ref'):
+            linked=self.research_ref(user,conv['followup_ref'],True)
+            if linked['id'] not in {e['id'] for e in evidence}:
+                evidence.append(next(e for e in knowledge if e['id']==linked['id']))
         if targets:
             # Persona evidence is explicit, not silently counted in filtered VoC statistics.
             ids = {i for r in targets for i in r["evidence_ids"]} | {e["id"] for e in evidence}
@@ -201,14 +210,14 @@ class Chat:
             payload = {"question": question, "history": structured_history, "moderator_messages": moderator,
                 "decisions": [d for d in conv.get("decisions", []) if d.get("active", True)], "objective": conv.get("objective", ""),
                 "round_type": conv.get("round_type", "explore"), "evidence": evidence, "statistics": stat_input,
-                "study": study,
+                "study": study, "followup_context": conv.get("followup_context"),
                 "search": search_info, "persona_evidence_scope": "Profile evidence may predate the requested analytics filter; use statistics only for filtered counts."}
             if person:
                 payload["persona"] = person
             answer = validate_answer(self.generate("interview" if person else "chat", payload), evidence, stat_input, bool(person))
             response = {**answer, "text": inline_text(answer), "speaker": person["alias"] if person else "리서치 어시스턴트",
                 "persona_id": person["id"] if person else None, "persona_version": person["version"] if person else None,
-                "is_synthetic": bool(person), "model": self.model.model, "provider": getattr(self.model, "provider", "test"),
+                "is_synthetic": bool(person), **derived_nature(evidence+history+targets), "model": self.model.model, "provider": getattr(self.model, "provider", "test"),
                 "dependencies": deps, "status": "completed", "statistics": stat_input, "search": search_info}
             responses.append(response)
             structured_history.append({**response, "id": "current-round-" + str(len(responses))})

@@ -224,7 +224,7 @@ class Stage1ResearchTests(unittest.TestCase):
 
     def test_shared_ancestry_is_checked_once_per_access_traversal(self):
         brief=self.brief();rows=graph(self.s,self.u,brief);selected=pack(self.s,self.u,brief,rows)
-        with patch.object(self.s,'knowledge',wraps=self.s.knowledge) as lookup:
+        with patch.object(self.s,'base_knowledge',wraps=self.s.base_knowledge) as lookup:
             self.assertTrue(self.s.accessible(self.u['project_id'],selected))
         self.assertEqual(lookup.call_count,1)
 

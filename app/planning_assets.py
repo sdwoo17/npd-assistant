@@ -101,7 +101,7 @@ class PlanningAssets(PlanningRegions):
             locations=document_locations(body,content)
         digest = hashlib.sha256(raw).hexdigest()
         purpose = body.get('purpose', 'story_sketch')
-        if purpose not in ('story_sketch', 'existing_service', 'actual_fgi', 'internal_voc'):
+        if purpose not in ('story_sketch', 'existing_service', 'actual_fgi', 'internal_voc', 'customer_research'):
             raise AppError('기획 자료의 용도를 확인하세요.')
         old = self.asset(user, body['asset_id']) if body.get('asset_id') else None
         nature=upload_nature(body,content,old)

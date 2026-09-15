@@ -25,6 +25,7 @@ jobs:
       - run: node --check static/app.js
       - run: node --check static/planning.js
       - run: node --check static/research-workspace.js
+      - run: node --check static/research-flow.js
       - run: python scripts/regression.py --passes 3 --browser
       - name: Build container and verify local HTTP startup
         run: |

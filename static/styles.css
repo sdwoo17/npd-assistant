@@ -1094,3 +1094,24 @@ form [type="submit"] {
 #research-workspace .planning-list { max-height: 18rem; overflow: auto; }
 
 #research-workspace fieldset { min-width: 0; max-width: 100%; box-sizing: border-box; }
+
+/* PO research task navigation and contextual document interview. */
+.flow-header { position: sticky; top: 0; z-index: 20; background: #fff; gap: 16px; box-shadow: 0 1px 5px #192a3820; }
+.flow-header strong, .flow-header small { display: block; }
+.flow-header small { color: #546676; font-size: 12px; }
+.flow-save-tools { display: flex; align-items: center; gap: 12px; }
+.flow-steps { padding: 16px; margin-bottom: 20px; background: #e8f2f0; color: #20594e; border-radius: 8px; line-height: 1.8; }
+.flow-service-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.flow-service-grid textarea { min-height: 110px; resize: vertical; }
+.flow-interview { position: sticky; top: 90px; max-height: calc(100vh - 110px); overflow: auto; }
+.flow-choice { padding: 14px; margin: 10px 0; border: 1px solid #cdd9df; border-radius: 8px; background: #fff; }
+.flow-choice label { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.flow-choice input[type=checkbox] { width: 18px; height: 18px; flex: 0 0 18px; margin: 3px 0 0; }
+.flow-choice pre, .flow-service-grid pre, #results-workspace pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.7; }
+.flow-transcript { max-height: 320px; overflow: auto; padding: 8px; background: #f4f7f8; }
+.flow-proposals { border-left: 3px solid #347b6b; padding: 12px; margin: 16px 0; }
+.flow-upload { margin: 20px 0; }
+@media (max-width: 950px) { .flow-service-grid { grid-template-columns: 1fr; } .flow-interview { position: static; max-height: none; } .flow-header { flex-wrap: wrap; } .flow-save-tools { flex-wrap: wrap; } }
+
+.sidebar { overflow-y: auto; }
+.sidebar > * { flex-shrink: 0; }

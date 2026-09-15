@@ -20,12 +20,15 @@ from .definitions import Definitions
 from .research_workflow import ResearchWorkflow
 from .persona_catalog import PersonaCatalog, PERSONA_POOL_LIMIT
 from .research_workspace import ResearchWorkspace
+from .research_demo import ResearchDemo
+from .research_flow import ResearchFlow
+from .flow_contracts import SERVICE_FIELDS
 
 # Public compatibility export for earlier integrations.
 from .contracts import validate_answer as cited
 
 
-class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, PlanningAssets, Stories, Definitions, ResearchWorkflow, PersonaCatalog, ResearchWorkspace):
+class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, PlanningAssets, Stories, Definitions, ResearchWorkflow, PersonaCatalog, ResearchWorkspace, ResearchFlow, ResearchDemo):
     def __init__(self, store, model):
         self.store, self.model = store, model
         self._locks = {}
@@ -64,7 +67,7 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, Plannin
         finally:
             self._model_probe_lock.release()
 
-    def knowledge(self, project):
+    def base_knowledge(self, project):
         from .research_provenance import derived_nature
         sources = {r["id"]: r for r in self.store.list(project, "source")}
         taxonomy = self.features(project)
@@ -91,6 +94,25 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, Plannin
             r["feature_terms"] = " ".join(t for f in r["feature_ids"] if f in taxonomy for t in taxonomy[f]["terms"])
         return insights + voc
 
+    def knowledge(self, project):
+        from .research_provenance import derived_nature, synthetic_record
+        base=self.base_knowledge(project)
+        allowed={(e['kind'],e['id'],e['version']) for e in base}
+        results=[]
+        for kind in ('research_result','research_item','debrief'):
+            for row in self.store.list(project,kind):
+                if not (row.get('state')=='reviewed' or row.get('review_status')=='po_reviewed'):
+                    continue
+                if not self.accessible(project,row,_allowed=allowed):continue
+                results.append({'id':row['id'],'kind':kind,'version':row['version'],
+                    'title':row.get('title','검토한 가상 FGI 결과'),'text':row['text'],
+                    'evidence_type':'synthetic' if synthetic_record(row) else 'research',
+                    'feature':'','feature_ids':[],'feature_names':'','feature_terms':'','segment':'',
+                    'service_id':'','source_type':'saved_analysis','category':row.get('category',row.get('output_type','fgi')),
+                    'applicability':'검토한 프로젝트 분석 결과','limitations':'원천 관찰과 PO 해석을 구분하세요.',
+                    'dependencies':row.get('dependencies',[])+[{'kind':kind,'id':row['id'],'version':row['version']}],**derived_nature([row])})
+        return base+results
+
     def accessible(self, project, record, seen=None, _memo=None, _allowed=None):
         if record.get('withdrawn'):return False
         seen = set(seen or ())
@@ -109,11 +131,22 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, Plannin
         if record.get("kind") == "debrief":
             group_ids = {eid for key in ("common_needs", "disagreements", "hypotheses", "unsupported_claims", "followup_questions")
                 for row in record.get(key, []) for eid in row.get("evidence_ids", [])}
-            tracked_ids = {d["id"] for d in dependencies if d["kind"] in ("insight", "voc")}
+            tracked_ids = {d["id"] for d in dependencies if d["kind"] in ("insight", "voc", "research_result", "research_item", "debrief")}
             if not group_ids.issubset(tracked_ids):
                 # Old edited summaries may have citations without version lineage.
                 return False
-        allowed = {(e["kind"], e["id"], e["version"]) for e in self.knowledge(project)} if _allowed is None else _allowed
+        allowed = {(e["kind"], e["id"], e["version"]) for e in self.base_knowledge(project)} if _allowed is None else _allowed
+        if record.get('kind')=='research_result' and record.get('category')=='voc':
+            from .research_provenance import synthetic_record
+            mids=record.get('message_ids',[])
+            real={r['id'] for r in self.voc_records(project) if r['evidence_type']=='real'}
+            if not mids:return False
+            for mid in mids:
+                try:message=self.store.get(project,'message',mid)
+                except AppError:return False
+                if synthetic_record(message) or any(d['kind']=='persona' for d in message.get('dependencies',[])) or not real.intersection(message.get('evidence_ids',[])):
+                    return False
+                if not self.accessible(project,message,seen,memo,allowed):return False
         for d in dependencies:
             if d["kind"] == "persona":
                 try:
@@ -122,7 +155,7 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, Plannin
                     return False
                 if not candidate or not self.accessible(project, candidate, seen, memo, allowed):
                     return False
-            elif d["kind"] in ("planning_asset", "user_story", "definition", "research_result", "debrief", "story_draft", "public_search", "research_item", "research_pack"):
+            elif d["kind"] in ("planning_asset", "user_story", "definition", "research_result", "debrief", "story_draft", "public_search", "research_item", "research_pack", "service_context", "research_inputs", "persona_batch"):
                 try:
                     source = self.store.get(project, d["kind"], d["id"])
                     if source["version"] != d["version"] or source.get("withdrawn") or not self.accessible(project, source, seen, memo, allowed):
@@ -261,6 +294,12 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, Plannin
         parsed = urlparse(route)
         path, query = parsed.path, {k: v[-1] for k, v in parse_qs(parsed.query).items()}
         p = user["project_id"]
+        if path == '/api/service-contexts':
+            return {'fields':SERVICE_FIELDS,
+                'contexts':[r for r in self.store.list(p,'service_context') if self.accessible(p,r)]}
+        if path == '/api/research-inputs':return self.research_inputs(user)
+        if path.startswith('/api/research-results/history/'):return self.result_history(user,path.rsplit('/',1)[-1])
+        if path == '/api/persona-candidates':return [r for r in self.store.list(p,'persona_batch') if self.accessible(p,r)]
         if path.startswith('/api/research-workspace/history/'):
             return self.research_item_history(user,path.rsplit('/',1)[-1])
         if path == '/api/research-workspace':
@@ -346,6 +385,18 @@ class Service(Research, Voc, Planning, Chat, Assets, Citations, Studies, Plannin
         if user.get("role") not in ("owner","po"):raise AppError("조회 권한으로 변경·확정할 수 없습니다.",403)
         p = user["project_id"]
         routes = {"/api/research/upload": self.research_upload, "/api/research/extract": self.research_extract,
+            '/api/definitions/link-research':self.link_definition_research,
+            '/api/service-contexts/extract':self.extract_service_context,
+            '/api/service-contexts/save':self.save_service_context,
+            '/api/service-contexts/interview':self.interview_service_context,
+            '/api/service-contexts/apply':self.apply_context_updates,
+            '/api/service-contexts/complete':self.complete_service_context,
+            '/api/service-contexts/edit':self.edit_service_report,
+            '/api/research-inputs':self.save_research_inputs,
+            '/api/studies/followup':self.followup_study,
+            '/api/studies/demo':self.import_targeting_demo,
+            '/api/persona-candidates/generate':self.generate_persona_candidates,
+            '/api/persona-candidates/adopt':self.adopt_persona_candidates,
             '/api/research-workspace/interview/start':self.start_po_interview,
             '/api/research-workspace/interview/apply':self.apply_po_interview,
             '/api/research-workspace/items':self.save_research_item,

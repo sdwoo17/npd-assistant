@@ -13,23 +13,25 @@ from .research_provenance import derived_nature
 class Definitions:
     def definition_context(self, user):
         p=user['project_id']
-        pack,items=self.selected_research(user)
-        linked=[]
+        flow_selection,flow_rows=self.selected_flow_inputs(user)
+        pack,items=(None,[]) if flow_selection else self.selected_research(user)
+        linked=list(flow_rows)
         if pack:
             for item in items:
                 linked.extend(self.research_ref(user,r,True) for r in item['input_refs'] if r['kind']!='research_item')
-        elif self.store.list(p,'research_item') or any(r.get('state')=='reviewed' for r in self.store.list(p,'research_result')):
+        elif not flow_selection and (self.store.list(p,'research_item') or any(r.get('state')=='reviewed' for r in self.store.list(p,'research_result'))):
             raise AppError('연구 작업·PRD 준비에서 사용할 연구 묶음과 버전을 먼저 선택하세요.',409)
         linked_ids={r['id'] for r in linked}
         definitions=[]
         for selected in self.store.list(p,'planning_selection'):
             row=self.store.get(p,'definition',selected['document_id'])
+            if flow_selection and row.get('research_input_ref')!={'id':flow_selection['id'],'version':flow_selection['version']}:continue
             if pack and row.get('research_id')!=pack['research_id'] and row['id'] not in linked_ids:continue
             if row['version']!=selected['document_version'] or not self.accessible(p,row):
                 raise AppError('선택한 기준 문서가 변경됐습니다. 수정안을 검토·확정한 뒤 기획을 이어가세요.',409)
             definitions.append(row)
         stories=[r for r in self.story_list(user) if not r.get('redacted') and r['definition_status']=='confirmed'
-            and (not pack or r['id'] in linked_ids)]
+            and (not (pack or flow_selection) or r['id'] in linked_ids)]
         research=[r for r in linked if r['kind']=='research_result']
         # Normalize legacy reviewed results at this boundary too: old secondary
         # generated sections must never contradict their canonical PO text.
@@ -40,14 +42,17 @@ class Definitions:
             ref=conv.get('active_debrief')
             if ref:
                 row=self.store.get(p,'debrief',ref['id'])
-                if row['version']==ref['version'] and self.accessible(p,row) and (not pack or row['id'] in linked_ids):debriefs.append(row)
+                if row['version']==ref['version'] and self.accessible(p,row) and (not (pack or flow_selection) or row['id'] in linked_ids):debriefs.append(row)
         records=definitions+stories+research+debriefs+items+([pack] if pack else [])
         if len(records)>100 or len(json.dumps(records,ensure_ascii=False))>140000:
             raise AppError('기획 맥락이 큽니다. 사용하지 않는 문서를 보류하거나 범위를 나눠 주세요.',409)
         return {'definitions':definitions,'stories':stories,'research_results':research,'reviewed_fgi':debriefs,
-            'research_items':items,'research_packs':[pack] if pack else []}
+            'research_items':items,'research_packs':[pack] if pack else [],'research_inputs':[flow_selection] if flow_selection else []}
 
     def definition_evidence(self, user, context, query):
+        if context.get('research_inputs'):
+            selected={r['id'] for r in context['research_results']+context['reviewed_fgi']}
+            return [e for e in self.knowledge(user['project_id']) if e['id'] in selected]
         evidence=self.search(user['project_id'],query)[0]
         packs=context.get('research_packs',[])
         if packs:
@@ -66,7 +71,7 @@ class Definitions:
         return {'stages':DEFINITION_STAGES,'documents':[r if self.accessible(user['project_id'],r) else self.redacted(r)
             for r in self.store.list(user['project_id'],'definition')]}
 
-    def definition_fields(self, user, body):
+    def definition_fields(self, user, body, input_evidence=None):
         stage=body.get('stage')
         if stage not in DEFINITION_STAGES or stage=='stories':
             raise AppError('기획 단계를 선택하세요. 사용자 스토리는 스토리 편집기에서 작성합니다.')
@@ -94,6 +99,7 @@ class Definitions:
             allowed={d['id'] for d in pack['dependencies']}
             evidence={rid:r for rid,r in evidence.items() if rid in allowed}
             evidence.update({r['id']:r for r in pack_rows})
+        if input_evidence is not None:evidence={r['id']:r for r in input_evidence}
         ids={rid for s in sections for rid in s['evidence_ids']}
         if not ids.issubset(evidence):raise AppError('현재 공개 근거를 연결하세요.',409)
         for s in sections:validate_citations(s['text'],s['evidence_ids'])
@@ -126,10 +132,15 @@ class Definitions:
         if any(key in body for key in ('state','confirmed_version','confirmed_by','dependencies')):
             raise AppError('문서 상태는 명시적 검토 동작으로 변경하세요.')
         data={**(old or {}),**body}
-        if not data.get('research_pack_ref'):
+        flow,flow_rows=self.selected_flow_inputs(user)
+        if not flow and not data.get('research_pack_ref'):
             pack,_=self.selected_research(user)
             if pack:data['research_pack_ref']={'id':pack['id'],'version':pack['version']}
-        fields,deps=self.definition_fields(user,data)
+        selected_evidence=[e for e in self.knowledge(p) if e['id'] in {r['id'] for r in flow_rows}] if flow else None
+        fields,deps=self.definition_fields(user,data,input_evidence=selected_evidence)
+        if flow:
+            fields['research_input_ref']={'id':flow['id'],'version':flow['version']}
+            deps+=lineage([flow]+flow_rows)
         fields.update(derived_nature([fields]+([old] if old else [])))
         fields.update(state='draft',dependencies=(old.get('dependencies',[]) if old else [])+deps,
             authored_by=user['id'],confirmed_version=old.get('confirmed_version') if old else None)
@@ -144,8 +155,10 @@ class Definitions:
         context=self.definition_context(user)
         evidence=self.definition_evidence(user,context,prompt)
         pack=context['research_packs'][0] if context['research_packs'] else None
+        flow_selection=context.get('research_inputs',[])
         prior=[r for r in self.store.list(p,'definition') if r.get('stage')==stage and self.accessible(p,r)
-            and (not pack or r.get('research_id')==pack['research_id'])][-3:]
+            and (not pack or r.get('research_id')==pack['research_id'])
+            and (not flow_selection or r.get('research_input_ref')=={'id':flow_selection[0]['id'],'version':flow_selection[0]['version']})][-3:]
         result=self.generate('definition_draft',{'stage':DEFINITION_STAGES[stage],'prompt':prompt,
             'context':context,'evidence':evidence,'previous_variants':prior,
             'required_sections':PRD_SECTIONS if stage=='prd' else {},
@@ -153,13 +166,29 @@ class Definitions:
         fields,deps=self.definition_fields(user,{**result,'stage':stage,
             **({'research_pack_ref':{'id':pack['id'],'version':pack['version']}} if pack else {}),
             'questions':[{'text':q,'status':'unanswered','answer':''} for q in result['questions']],
-            'story_refs':[{'id':r['id'],'version':r['version']} for r in context['stories']]})
+            'story_refs':[{'id':r['id'],'version':r['version']} for r in context['stories']]},input_evidence=evidence)
+        if flow_selection:fields['research_input_ref']={'id':flow_selection[0]['id'],'version':flow_selection[0]['version']}
         records=[r for group in context.values() for r in group]+evidence
         fields.update(derived_nature(records))
         fields.update(state='draft',dependencies=lineage(records)+deps+dependency_map(prior),prompt=prompt,prompt_version='stage2-draft-v1',
             model=self.model.model,authorship='ai_proposed',authored_by=user['id'],confirmed_version=None)
         self.planning_actor(user)
         return self.store.write(p,inserts=[('definition',fields,'DOC-'+uuid.uuid4().hex)],expected_epoch=epoch)[0]
+
+    def link_definition_research(self,user,body):
+        p=user['project_id'];epoch=self.store.epoch(p)
+        row=self.definition(user,text(body,'document_id',80))
+        if row['version']!=revision(body) or row['state']!='draft':raise AppError('연구 검토 기준을 연결할 현재 초안을 선택하세요.',409)
+        pack,items=self.selected_research(user)
+        if not pack:raise AppError('연구 작업·PRD 준비에서 검토할 연구 묶음을 먼저 선택하세요.',409)
+        selected,results=self.selected_flow_inputs(user)
+        if selected:
+            included={(d['kind'],d['id'],d['version']) for d in pack['dependencies'] if d['kind'] in ('research_result','debrief')}
+            wanted={(r['kind'],r['id'],r['version']) for r in results}
+            if included!=wanted:raise AppError('연구 묶음의 분석 결과 버전과 PRD 참고 선택이 다릅니다. 동일한 결과를 연결하세요.',409)
+        self.planning_actor(user)
+        return self.store.write(p,updates=[('definition',row['id'],{'research_pack_ref':{'id':pack['id'],'version':pack['version']},
+            'research_id':pack['research_id'],'dependencies':row['dependencies']+lineage([pack])},row['version'])],expected_epoch=epoch)[0]
 
     def definition_readiness(self, user, body):
         row=self.definition(user,text(body,'document_id',80))
@@ -231,6 +260,7 @@ class Definitions:
         document={k:row[k] for k in ('id','version','stage','title','sections','assumptions','questions','story_refs','confirmed_at')}
         document.update(derived_nature([row]))
         if row.get('research_pack_ref'):document['research_pack_ref']=row['research_pack_ref']
+        if row.get('research_input_ref'):document['research_input_ref']=row['research_input_ref']
         package={'schema_version':'npd.definition-package.v1','document':document,
             'stories':story_export['package']['stories'] if story_export else [],
             'disclosure':'PO가 확정한 설계안입니다. 고객 검증 상태는 각 스토리에 별도로 기록합니다. 비공개 기획 원본은 제외했으며 AXIOM 수신 규격 검증은 별도입니다.'}

@@ -68,6 +68,7 @@ class ResearchWorkflow:
             if len(messages)!=len(ids) or not messages:raise AppError('근거가 있는 분석 답변을 선택하세요.',409)
         if category=='fgi_actual' and (not assets or messages):raise AppError('실제 FGI 등록에는 실제 조사 결과 문서를 연결하세요. 가상 대화를 실제 결과로 등록할 수 없습니다.')
         if not assets and not messages:raise AppError('리서치 원본 또는 분석 답변을 연결하세요.')
+        if category=='voc':self.require_actual_voc_messages(user,messages)
         content=text(body,'text',50000)
         evidence_ids=sorted({rid for m in messages for rid in m['evidence_ids']})
         validate_citations(content,set(evidence_ids)|{a['id'] for a in assets})
@@ -83,6 +84,9 @@ class ResearchWorkflow:
     def review_research_result(self, user, body):
         p=user['project_id'];epoch=self.store.epoch(p)
         row=self.store.get(p,'research_result',text(body,'result_id',80))
+        if row['category']=='voc':
+            messages=[self.store.get(p,'message',rid) for rid in row.get('message_ids',[])]
+            self.require_actual_voc_messages(user,messages)
         if not self.accessible(p,row):raise AppError('분석 결과의 원본·근거가 변경됐습니다.',409)
         content=text(body,'text',50000)
         validate_citations(content,set(row['evidence_ids'])|{r['id'] for r in row.get('source_refs',[])})
@@ -96,6 +100,7 @@ class ResearchWorkflow:
             'reviewed_by':user['id'],'review_reason':optional(body,'reason',3000),
             'canonical_version':'research-result.v2'}
         if row['category']=='existing_service':
+            if content!=row['text']:changes['context_snapshot']=None
             # The editable text is canonical. Never send superseded generated
             # sections alongside the PO's replacement text to another model.
             changes['sections']=[{'title':'PO 검토본','text':content,

@@ -234,6 +234,8 @@ test("browser: @ autocomplete, persona created through chat, project isolation a
       "소재 리포트 근거가 필요한 광고주 페르소나를 만들어 주세요.",
     );
     await nav(page, "personas");
+    await page.locator("#persona-draft-workspace .flow-proposals input[type=checkbox]").first().check();
+    await page.getByRole("button", {name:"선택한 초안만 페르소나 풀에 등록"}).first().click();
     await page.locator("#persona-list").getByText("@생성광고주 · v1").waitFor();
     await nav(page, "chat");
     await page.selectOption("#chat-action", "ask");
@@ -602,23 +604,21 @@ test("browser: source nature, detailed baseline interview and ratio rows survive
   const {ctx,page,errors}=await login("po");
   try{
     await nav(page,"baseline");
-    await page.locator("#baseline-workspace").getByLabel("자료 성격",{exact:true}).selectOption("SYNTHETIC");
-    await page.getByLabel("기획 자료 제목",{exact:true}).fill("Synthetic labelled document");
-    await page.getByLabel("PNG·JPEG·문서 / 최대 3MB",{exact:true}).setInputFiles({name:"synthetic-nature.md",mimeType:"text/markdown",buffer:Buffer.from("Synthetic UI document only")});
+    await page.getByRole("combobox",{name:"문서 자료 성격"}).selectOption("SYNTHETIC");
+    await page.getByLabel("문서 추가 · 파일당 3MB, 한 번에 최대 10개",{exact:true}).setInputFiles({name:"synthetic-nature.md",mimeType:"text/markdown",buffer:Buffer.from("Synthetic UI document only")});
     let response=page.waitForResponse(r=>r.url().endsWith("/api/planning-assets")&&r.request().method()==="POST");
-    await page.getByRole("button",{name:"기획 자료 업로드",exact:true}).click();
+    await page.getByRole("button",{name:"문서 업로드",exact:true}).click();
     const uploaded=await response;assert.equal(uploaded.status(),201);assert.equal((await uploaded.json()).source_nature,"SYNTHETIC");
-    await page.locator("#baseline-workspace").getByLabel("기획 자료 제목",{exact:true}).fill("Synthetic mixed batch");
-    await page.getByLabel("PNG·JPEG·문서 / 최대 3MB",{exact:true}).setInputFiles([
+    await page.getByRole("checkbox",{name:/synthetic-nature.md/}).waitFor();
+    await page.getByLabel("문서 추가 · 파일당 3MB, 한 번에 최대 10개",{exact:true}).setInputFiles([
       {name:"valid.md",mimeType:"text/markdown",buffer:Buffer.from("Synthetic valid batch input")},
       {name:"unsupported.bin",mimeType:"application/octet-stream",buffer:Buffer.from("Unsupported fixture")},
       {name:"another.txt",mimeType:"text/plain",buffer:Buffer.from("Synthetic valid second input")}
     ]);
-    await page.getByRole("button",{name:"기획 자료 업로드",exact:true}).click();
-    await page.getByRole("heading",{name:"파일별 업로드 결과",exact:true}).waitFor();
-    await page.locator("#baseline-workspace").getByText("valid.md: 저장 완료",{exact:true}).waitFor();
-    await page.locator("#baseline-workspace").getByText("another.txt: 저장 완료",{exact:true}).waitFor();
-    await page.locator("#baseline-workspace").getByText(/unsupported.bin: 실패/).waitFor();
+    await page.getByRole("button",{name:"문서 업로드",exact:true}).click();
+    await page.getByRole("checkbox",{name:/valid.md/}).waitFor();
+    await page.getByRole("checkbox",{name:/another.txt/}).waitFor();
+    await page.locator("#notice").getByText(/unsupported.bin/).waitFor();
     // Seed only prerequisite records through the authenticated API; exercise interview and numeric editing in UI.
     const seeded=await page.evaluate(async()=>{
       const contracts=await api("/api/research-workspace");
@@ -680,4 +680,38 @@ test("browser: source nature, detailed baseline interview and ratio rows survive
     await page.screenshot({path:"test-results/detailed-research-mobile.png",fullPage:true});
     assert.deepEqual(errors,[]);
   }catch(error){console.error("Detailed research notice:",await page.locator("#notice").textContent());await page.screenshot({path:"test-results/detailed-research-failure.png",fullPage:true});throw error;}finally{await ctx.close();}
+});
+
+
+test("browser: document context, selective interview, report Edit and PRD input selection",async()=>{
+ const {ctx,page,errors}=await login("po");
+ try {
+  await page.locator(".sidebar details summary").click();await page.fill("#project-title","문서 인터뷰 검증");await page.locator("#project-create button").click();
+  await page.waitForFunction(()=>document.querySelector("#project-name").textContent==="문서 인터뷰 검증");await nav(page,"baseline");
+  assert.equal(await page.locator("#flow-project").textContent(),"문서 인터뷰 검증");
+  await page.getByLabel("문서 추가 · 파일당 3MB, 한 번에 최대 10개").setInputFiles({name:"context-demo.md",mimeType:"text/markdown",buffer:Buffer.from("Synthetic: advertiser compares conditions; operator checks approval.")});
+  await page.getByRole("combobox",{name:"문서 자료 성격"}).selectOption("SYNTHETIC");await page.getByRole("button",{name:"문서 업로드",exact:true}).click();
+  await page.getByRole("checkbox",{name:/context-demo.md/}).check();await page.getByRole("button",{name:"선택 문서에서 서비스 내용 추출"}).click();
+  await page.getByLabel("제품 이름",{exact:true}).waitFor();assert.equal(await page.getByLabel("제품 이름",{exact:true}).inputValue(),"시연 서비스");
+  const details=await page.getByLabel("상세 서비스 설명",{exact:true}).inputValue();
+  await page.getByLabel("제품 이름",{exact:true}).fill("검토 제품");await page.click("#flow-save");await page.waitForFunction(()=>document.querySelector("#flow-save-state").textContent==="저장 완료");
+  await page.getByLabel("확인하거나 추가할 서비스 설명").fill("향후 조건 저장을 원합니다.");await page.getByRole("button",{name:"인터뷰 보내기"}).click();
+  await page.getByRole("button",{name:"선택한 변경 적용 · 나머지는 제외"}).click();
+  await page.waitForFunction(()=>document.querySelector('[name="proposed"]')?.value.includes("향후 조건 저장"));assert.equal(await page.getByLabel("상세 서비스 설명",{exact:true}).inputValue(),details);
+  await page.getByLabel("보고서 제목",{exact:true}).fill("검토한 서비스 보고서");await page.getByRole("button",{name:"보고서 생성 · 검토본 저장"}).click();
+  await page.getByRole("checkbox",{name:/검토한 서비스 보고서/}).check();await page.getByRole("button",{name:"선택한 버전을 PRD 입력으로 저장"}).click();
+  await page.waitForFunction(()=>document.querySelector("#notice").textContent.includes("PRD 참고 결과와 버전"));
+  await page.locator('[data-stage="definition"]').click();await page.getByRole("heading",{name:"PRD에 사용할 리서치 결과"}).waitFor();
+  assert.equal(await page.getByRole("checkbox",{name:/검토한 서비스 보고서/}).isChecked(),true);
+  await page.getByRole("button",{name:"AI초안작성",exact:true}).click();await page.locator("#draft-prompt").fill("선택한 서비스 결과로 개선 방향을 정리해 주세요.");
+  // Use the existing prompt dialog's submit action.
+  await page.locator("#draft-prompt-form button[type=submit]").click();
+  await page.getByRole("button",{name:/선택한 서비스 결과로 개선 방향/}).waitFor();
+  await nav(page,"results");await page.locator("#results-workspace").getByText("내용·근거 확인",{exact:true}).click();await page.locator("#results-workspace").getByRole("button",{name:"Edit · 문맥과 인터뷰로 수정"}).click();
+  await page.getByLabel("제품 이름",{exact:true}).waitFor();assert.equal(await page.getByLabel("제품 이름",{exact:true}).inputValue(),"검토 제품");
+  assert.match(await page.locator(".flow-transcript").textContent(),/향후 조건 저장/);
+  await page.screenshot({path:"test-results/research-flow-desktop.png",fullPage:true});await page.setViewportSize({width:390,height:844});
+  await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth+1);
+  await page.screenshot({path:"test-results/research-flow-mobile.png",fullPage:true});assert.deepEqual(errors,[]);
+ }catch(e){console.error("Research flow notice:",await page.locator("#notice").textContent());await page.screenshot({path:"test-results/research-flow-failure.png",fullPage:true});throw e;}finally{await ctx.close();}
 });

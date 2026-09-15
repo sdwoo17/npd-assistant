@@ -178,7 +178,7 @@ class Store:
                 except sqlite3.IntegrityError:
                     raise AppError("동일한 이름 또는 요청이 이미 저장됐습니다.", 409)
                 saved.append(obj)
-                changed |= kind in ("source", "insight", "voc", "feature", "persona", "study", "planning_asset", "user_story", "definition", "research_result", "research_item", "research_pack", "research_selection")
+                changed |= kind in ("source", "insight", "voc", "feature", "persona", "study", "planning_asset", "user_story", "definition", "research_result", "research_item", "research_pack", "research_selection", "service_context", "research_inputs", "persona_batch")
             for kind, rid, changes, expected in updates:
                 row = db.execute("SELECT body FROM records WHERE id=? AND project_id=? AND kind=?", (rid, project, kind)).fetchone()
                 if not row:
@@ -196,7 +196,7 @@ class Store:
                 except sqlite3.IntegrityError:
                     raise AppError("동일한 이름이 이미 사용 중입니다.", 409)
                 saved.append(obj)
-                changed |= kind in ("source", "insight", "voc", "feature", "persona", "study", "planning_asset", "user_story", "definition", "research_result", "research_item", "research_pack", "research_selection")
+                changed |= kind in ("source", "insight", "voc", "feature", "persona", "study", "planning_asset", "user_story", "definition", "research_result", "research_item", "research_pack", "research_selection", "service_context", "research_inputs", "persona_batch")
             after_pool = db.execute(pool_query, (project,)).fetchone()[0]
             if after_pool > 100 and after_pool > before_pool:
                 raise AppError("페르소나 풀은 최대 100명입니다. 사용하지 않는 프로필을 보관한 후 추가하세요.", 409)

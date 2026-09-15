@@ -17,7 +17,7 @@ def upload_nature(body,content='',old=None):
 
 def synthetic_record(row):
     f=row.get('fields',{})
-    return bool(row.get('contains_synthetic') or row.get('source_nature') in ('SYNTHETIC','MIXED')
+    return bool(row.get('is_synthetic') or row.get('contains_synthetic') or row.get('source_nature') in ('SYNTHETIC','MIXED')
         or row.get('evidence_nature') in ('SYNTHETIC','MIXED') or row.get('evidence_type') in ('synthetic','SYNTHETIC_FGI')
         or row.get('evidence_category')=='SYNTHETIC_FGI' or f.get('provenance')=='SYNTHETIC'
         or f.get('nature')=='SYNTHETIC' or f.get('evidence_type')=='SYNTHETIC_FGI'

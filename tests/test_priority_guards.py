@@ -138,7 +138,7 @@ class PriorityGuardTests(unittest.TestCase):
                 mutate(result)
             return result
         with patch.object(self.f.model, "generate", side_effect=generated):
-            return self.s.post(self.po, "/api/debriefs", {"conversation_id": conv["id"]})
+            return self.s.post(self.po, "/api/debriefs", {"conversation_id": conv["id"], "regenerate": True, "reason": "회귀 검사: 생성 결과 검증"})
 
     def test_all_generated_groups_reject_unsupported_claims_atomically(self):
         insight = self.store.get(self.p, "insight", self.f.insight["id"])

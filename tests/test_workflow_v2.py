@@ -199,7 +199,7 @@ class WorkflowV2Tests(unittest.TestCase):
         self.voc(52)
         rows=self.s.get(self.po,'/api/voc')['records']
         self.s.post(self.po,'/api/voc/feature',{'voc_id':rows[0]['id'],'feature':'budget'})
-        result=self.s.post(self.po,'/api/voc/classify',{})
+        result=self.s.post(self.po,'/api/voc/classify',{'synthetic_mode':True})
         self.assertEqual(result['updated'],51)
         calls=[p for t,p in self.f.model.calls if t=='classify'];self.assertEqual([len(p['voc']) for p in calls],[25,25,1])
         self.assertEqual(self.store.get(self.p,'voc',rows[0]['id'])['feature'],'budget')
@@ -211,7 +211,7 @@ class WorkflowV2Tests(unittest.TestCase):
             if task=='classify':result['classifications'][-1]['feature_ids']=['foreign-feature']
             return result
         self.s.model=TransformModel(transform)
-        with self.assertRaises(AppError):self.s.post(self.po,'/api/voc/classify',{})
+        with self.assertRaises(AppError):self.s.post(self.po,'/api/voc/classify',{'synthetic_mode':True})
         self.assertEqual(self.store.list(self.p,'voc'),before)
 
     def test_multilingual_search_includes_titles_and_project_scope(self):
@@ -240,16 +240,19 @@ class WorkflowV2Tests(unittest.TestCase):
         self.s.model=TransformModel(transform)
         with self.assertRaises(AppError):self.s.post(self.po,'/api/personas/generate',{'segment':'소규모 광고주 소재 리포트'})
         self.s.model=RecordingModel();p=self.s.post(self.po,'/api/personas/generate',{'segment':'소규모 광고주 소재 리포트'})
+        p=p['candidates'][0]
         self.assertGreater(p['grounding_counts']['synthetic_voc'],0)
         self.assertEqual(p['grounding_status'],'synthetic_or_partial_evidence')
 
-    def test_persona_creation_inside_chat_is_real_record_creation(self):
+    def test_persona_creation_inside_chat_requires_selection(self):
         self.voc();conv=self.f.conversation()
         response=self.chat(conv,'소재 리포트에 관심 있는 소규모 광고주 페르소나를 만들어 줘',action='create_persona',request_id='create-once')
-        self.assertEqual(response['messages'][-1]['status'],'persona_created')
-        self.assertEqual(len(self.store.list(self.p,'persona')),1)
+        self.assertEqual(response['messages'][-1]['status'],'persona_draft_created')
+        self.assertEqual(len(self.store.list(self.p,'persona')),0)
+        self.assertEqual(len(self.store.list(self.p,'persona_batch')),1)
         self.chat(conv,'소재 리포트에 관심 있는 소규모 광고주 페르소나를 만들어 줘',action='create_persona',request_id='create-once')
-        self.assertEqual(len(self.store.list(self.p,'persona')),1)
+        self.assertEqual(len(self.store.list(self.p,'persona')),0)
+        self.assertEqual(len(self.store.list(self.p,'persona_batch')),1)
 
     def test_persona_edit_pins_previous_version_for_followup(self):
         p=self.f.persona();conv=self.f.conversation([p['id']]);self.chat(conv)
