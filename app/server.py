@@ -58,6 +58,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {"status": "ok"})
             self.check_host()
             static = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"), "/planning.js": ("planning.js", "text/javascript"), "/research-workspace.js": ("research-workspace.js", "text/javascript"), "/styles.css": ("styles.css", "text/css")}
+            static['/research-flow.js'] = ('research-flow.js', 'text/javascript')
             if route in static:
                 path, mime = static[route]
                 return self.send(200, (ROOT / "static" / path).read_bytes(), mime + "; charset=utf-8")

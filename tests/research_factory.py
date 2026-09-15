@@ -9,6 +9,7 @@ def synthetic_fields(kind, **overrides):
     for key,spec in TYPES[kind].items():
         if spec['type']=='number':value=0 if spec['required'] else None
         elif spec['type']=='checkbox':value=False
+        elif spec['type']=='rows':value=[]
         elif spec['type']=='lines':value=['RS-00']
         elif spec['type']=='select':value=spec['options'][0]
         else:value='SYNTHETIC contract fixture; not observed research' if spec['required'] else ''

@@ -71,10 +71,17 @@
   }
   function uploadForm(root,purpose,onSaved,previous=null){
     const form=node("form"),title=pf(form,previous?"revision-title":"asset-title",previous?"교체 자료 제목":"기획 자료 제목",previous?.title||"","text"),file=pf(form,previous?"revision-file":"asset-file",previous?"교체할 파일":"PNG·JPEG·문서 / 최대 3MB","","text");
-    file.type="file";file.accept=purpose==="story_sketch"?".png,.jpg,.jpeg,.md,.txt,.pdf,.docx,.pptx":".md,.txt,.pdf,.docx,.pptx";
+    file.type="file";file.multiple=!previous;file.accept=purpose==="story_sketch"?".png,.jpg,.jpeg,.md,.txt,.pdf,.docx,.pptx":".md,.txt,.pdf,.docx,.pptx";
+    const nature=pick(form,previous?'revision-nature':'asset-nature','자료 성격',[["UNVERIFIED","미확인"],["SYNTHETIC","합성 예시"],["OBSERVED","실제 관측 자료"],["MIXED","실제·합성 혼합"]],previous?.source_nature||'UNVERIFIED');
     title.required=true;file.required=true;const submit=node("button",previous?"원본 새 버전 저장":"기획 자료 업로드","primary");submit.type="submit";form.append(submit);root.append(form);
-    form.onsubmit=planningGuard(async()=>{const row=await api("/api/planning-assets",{...await fileBody(file),title:title.value,purpose,...(previous?{asset_id:previous.id,expected_version:previous.version}:{})});
-      await load();await onSaved?.(row);notice(row.duplicate?"동일 원본이 있어 기존 자료를 선택했습니다. 분석은 별도로 실행하세요.":"현재 프로젝트의 기획 자료로 저장했습니다.");});
+    form.onsubmit=planningGuard(async()=>{
+      const files=[...file.files];if(!files.length)throw new Error("파일을 선택하세요.");if(files.length>10)throw new Error("한 번에 10개 이하로 올리세요. 분석 입력 상한은 별도로 적용됩니다.");
+      const results=[];let last=null;
+      for(const selected of files){try{const row=await api("/api/planning-assets",{...await fileBody({files:[selected]}),title:files.length>1?(title.value+" · "+selected.name).slice(0,200):title.value,purpose,source_nature:nature.value,...(previous?{asset_id:previous.id,expected_version:previous.version}:{})});last=row;results.push(selected.name+": "+(row.duplicate?"기존 원본 선택 · 중복":"저장 완료"));}catch(error){results.push(selected.name+": 실패 · "+error.message);}}
+      await load();if(last)await onSaved?.(last);
+      const summary=node("section",null,"panel");summary.append(node("h3","파일별 업로드 결과"));for(const result of results)summary.append(node("p",result));root.append(summary);
+      notice(results.join(" / ")+" · 분석은 선택한 원본으로 별도 실행하세요.");
+    });
   }
   async function sourcePanel(root){
     root.replaceChildren(node("h2","기획 원본"),node("p","손그림과 기획 문서는 실제 고객 근거와 별도로 보관합니다."));
@@ -268,16 +275,17 @@
     const initial=row.sections||(p.stage==="prd"?Object.entries(prdAreas).map(([id,title])=>({id,title,text:"",evidence_ids:[],coverage_status:"needs_work"})):[{id:"overview",title:stages[p.stage],text:"",evidence_ids:[]}]);
     const sections=repeat(form,"문단",initial,[["id","문단 식별자","text"],["title","문단 제목","text"],["text","본문","textarea"],["coverage_status","작성 상태","select",[["written","작성됨"],["needs_work","보완 필요"],["not_applicable","해당 없음"]]],["na_reason","해당 없음의 이유","textarea"]]);
     const assumptions=pf(form,"document-assumptions","가정 · 한 줄에 하나",(row.assumptions||[]).join("\n"));
-    const questions=repeat(form,"문서 확인 질문",row.questions||[],[["text","질문","textarea"],["status","상태","select",[["unanswered","미해소"],["answered","답변 완료"],["excluded","범위 제외"]]],["answer","답변·제외 사유","textarea"],["owner","후속 조사 책임자","text"],["next_action","조사 방법·필요 시점","textarea"]]);
+    const questions=repeat(form,"문서 확인 질문",row.questions||[],[["text","질문","textarea"],["status","상태","select",[["unanswered","미해소"],["answered","답변 완료"],["excluded","범위 제외"]]],["answer","답변·제외 사유","textarea"],["owner","후속 조사 책임자","text"],["next_action","후속 조사 방법","textarea"],["needed_stage","해결 필요 시점","select",[["DEVELOPMENT","개발 착수 전"],["RESEARCH","연구 검토 전"],["RELEASE","출시 전"]]]]);
     const stories=p.stories.filter(s=>!s.redacted&&s.definition_status==="confirmed"),storySelect=pick(form,"document-stories","연결할 확정 스토리",stories.map(s=>[s.id,s.title+" · v"+s.version]),(row.story_refs||[]).map(s=>s.id),true);
     const save=node("button","문서 초안 저장","primary");save.type="submit";form.append(save);
     form.onsubmit=planningGuard(async()=>{p.document=await api(row.id?"/api/definitions/update":"/api/definitions",{stage:p.stage,title:title.value,sections:sections().map(s=>({...s,evidence_ids:s.evidence_ids||[]})),assumptions:lines(assumptions),questions:questions(),story_refs:stories.filter(s=>values(storySelect).includes(s.id)).map(s=>({id:s.id,version:s.version})),...(row.id?{document_id:row.id,expected_version:row.version}:{})});await load();renderStage();notice("문서 초안을 저장했습니다.");});
     if(row.id){const controls=node("div",null,"panel");root.append(controls,node("p",row.id+" · v"+row.version+" · "+row.state));
+      if(p.stage==="prd"&&row.state!=="confirmed")controls.append(node("p","초안은 선택한 리서치 결과로 작성합니다. 최종 확정은 같은 결과를 연결한 연구 묶음의 범위·근거·요구사항 검토를 통과해야 합니다."),planningButton("선택한 연구 묶음을 이 초안에 연결",async()=>{p.document=await api("/api/definitions/link-research",{document_id:row.id,expected_version:row.version});await load();renderStage();}));
       if(p.stage==="prd")controls.append(planningButton("저장된 PRD 준비 상태 검사",async()=>{const check=await api("/api/definitions/readiness",{document_id:row.id,expected_version:row.version});const result=node("div");result.append(node("h3",check.ready?"연구 검토 준비 조건 충족":"보완 필요"),node("p",check.scope));for(const message of check.errors)result.append(node("p",message,"error"));controls.append(result);}));
       controls.append(planningButton("이 버전을 기준 문서로 확정",async()=>{p.document=await api("/api/definitions/confirm",{document_id:row.id,expected_version:row.version});await load();renderStage();notice("검토한 문서를 후속 기획의 기준으로 선택했습니다.");}));
       if(row.state==="confirmed")exportButtons(controls,"/api/definitions/export",{document_id:row.id,expected_version:row.version},row.id+"-v"+row.version);
     }
-    const inputs=node("details",null,"panel");inputs.append(node("summary","연구 입력 범위"),node("p",row.research_pack_ref?"연결된 연구 묶음: "+row.research_pack_ref.id+" · v"+row.research_pack_ref.version:"연구 작업·PRD 준비에서 사용할 산출물의 버전을 선택하세요."),planningButton("연구 묶음 선택·보완",()=>page("research-workspace")));root.append(inputs);
+    const inputs=node("details",null,"panel");inputs.append(node("summary","연구 입력 범위"),node("p",row.research_pack_ref?"연결된 연구 묶음: "+row.research_pack_ref.id+" · v"+row.research_pack_ref.version:"연구 작업·PRD 준비에서 사용할 산출물의 버전을 선택하세요."),planningButton("연구 묶음 선택·보완",()=>page("research-workspace")));root.append(inputs); const selectedInputs=node("section",null,"panel");root.append(selectedInputs);window.researchInputPanel?.(selectedInputs).catch(e=>notice(e.message,true));
   }
   function renderStage(){
     const root=$("definition-workspace"),tabs=$("definition-tabs");root.replaceChildren();tabs.replaceChildren();
@@ -287,18 +295,19 @@
   function resultCards(root,category){
     for(const row of p.results.filter(r=>!r.redacted&&r.category===category)){
       const card=node("details",null,"planning-entry");card.append(node("summary",row.title+" · v"+row.version+" · "+row.state));
+      card.append(node("p","자료 성격: "+({SYNTHETIC:"합성 예시",MIXED:"실제·합성 혼합",OBSERVED:"실제 관측 자료",UNVERIFIED:"미확인"}[row.evidence_nature]||"미확인")));
       const text=pf(card,"research-review-text","분석 내용·조건·한계",row.text);
       const questions=row.category==="existing_service"?pf(card,"research-review-questions","확인 질문 · 한 줄에 하나",(row.questions||[]).join("\n")):null;
       const reason=pf(card,"research-review-reason","검토·변경 이유",row.review_reason||"");
       const actual=row.category==="fgi_actual"?pf(card,"actual-report","실제 고객 조사 보고서임을 확인했습니다 · 가상 FGI 제외",row.actual_customer_data,"checkbox"):null;
-      card.append(planningButton("검토본 저장 · PRD 작성에 연결",async()=>{await api("/api/research-results/review",{result_id:row.id,expected_version:row.version,text:text.value,reason:reason.value,...(questions?{questions:lines(questions)}:{}),...(actual?{actual_customer_data:actual.checked}:{})});await load();await window.planningPage(category==="existing_service"?"baseline":category==="fgi_actual"?"studies":category==="voc"?"voc":"chat");notice("검토 결과를 저장했습니다. 연구 묶음에서 사용할 버전을 선택하세요.");}),
-        planningButton("분석 Markdown 내보내기",()=>download(row.id+".md",row.text)));root.append(card);
+      card.append(planningButton("검토본 저장 · PRD 작성에 연결",async()=>{await api("/api/research-results/review",{result_id:row.id,expected_version:row.version,text:text.value,reason:reason.value,...(questions?{questions:lines(questions)}:{}),...(actual?{actual_customer_data:actual.checked}:{})});await load();await window.planningPage(category==="existing_service"?"baseline":category==="fgi_actual"?"studies":category==="voc"?"voc":"chat");notice("검토 결과를 지식으로 저장했습니다. 저장된 리서치 결과 또는 PRD 화면에서 참고할 버전을 선택하세요.");}),
+        planningButton("분석 Markdown 내보내기",()=>download(row.id+".md","자료 성격: "+(row.evidence_nature||"UNVERIFIED")+"\n\n"+row.text)));root.append(card);
     }
   }
   async function baseline(){
     const root=$("baseline-workspace");root.replaceChildren(node("h2","기존 서비스 PRD·매뉴얼"));
     uploadForm(root,"existing_service",baseline);
-    const assets=p.assets.filter(a=>a.purpose==="existing_service"&&a.media_type==="document"),selected=pick(root,"baseline-assets","함께 분석할 문서",assets.map(a=>[a.id,a.title+" · v"+a.version]),[],true);
+    const assets=p.assets.filter(a=>a.purpose==="existing_service"&&a.media_type==="document"),selected=pick(root,"baseline-assets","함께 분석할 문서",assets.map(a=>[a.id,a.title+" · v"+a.version+" · "+({SYNTHETIC:"합성",MIXED:"혼합",OBSERVED:"관측"}[a.source_nature]||"미확인")]),[],true);
     root.append(planningButton("AI초안작성 · 전체 서비스 분석",()=>prompt("기존 서비스 종합 분석",async intent=>{
       await api("/api/service-analysis",{prompt:intent,asset_refs:assets.filter(a=>values(selected).includes(a.id)).map(a=>({id:a.id,version:a.version}))});await load();await baseline();
     })));resultCards(root,"existing_service");
@@ -349,7 +358,7 @@
     const stage=["definition","prototype","uat"].includes(name)?name:"research";
     document.querySelectorAll("[data-stage]").forEach(b=>b.classList.toggle("active",b.dataset.stage===stage));
     if(["baseline","definition","voc","studies","personas","chat"].includes(name))await load();
-    if(name==="definition")renderStage();if(name==="baseline")await baseline();if(name==="personas")await catalog();if(name==="chat")publicResearch();
+    if(name==="definition")renderStage();if(name==="baseline"&&!window.researchFlowPage)await baseline();if(name==="personas")await catalog();if(name==="chat")publicResearch();
     if(name==="voc"){const root=$("voc-result-workspace");root.replaceChildren();saveAnalysisForm(root,"voc");}
     if(name==="studies"){const root=$("actual-fgi-workspace");root.replaceChildren();root.append(planningButton("페르소나 검색·풀 관리",()=>page("personas")));saveAnalysisForm(root,"fgi_actual");}
   };
@@ -357,6 +366,6 @@
     closePrompt();canvasView=null;editorFields={};p={stage:"product",assets:[],stories:[],documents:[],results:[],drafts:[],runs:{},extractions:[],selectedRuns:[],recovery:null,story:null,document:null,activeAsset:null,activeRun:null};
     for(const id of ["baseline-workspace","definition-workspace","public-research-workspace","voc-result-workspace","actual-fgi-workspace","persona-catalog-workspace"])$(id).replaceChildren();
   };
-  for(const name of ["research","personas","prd"]){const b=document.querySelector(`[data-page="${name}"]`);if(b)$("planning-tools").append(b);}
+  for(const name of ["research","prd"]){const b=document.querySelector(`[data-page="${name}"]`);if(b)$("planning-tools").append(b);}
   document.querySelectorAll("[data-stage]").forEach(b=>b.onclick=planningGuard(()=>page(b.dataset.stage==="research"?"baseline":b.dataset.stage)));
 })();

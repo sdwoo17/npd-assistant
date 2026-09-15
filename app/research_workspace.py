@@ -8,10 +8,14 @@ from .stories import lineage
 from .research_contracts import (SCHEMA_VERSION, TYPES, TASKS, GRAPH_TYPES, PRD_SECTIONS,
                                  clean_fields, content_errors, render_item)
 
+from .research_interviews import ResearchInterviews
+from .research_details import computed_details
+from .research_provenance import derived_nature, synthetic_record
+
 REF_KINDS=('insight','voc','research_result','debrief','planning_asset','user_story','definition','research_item')
 
 
-class ResearchWorkspace:
+class ResearchWorkspace(ResearchInterviews):
     def research_ref(self, user, ref, reviewed=False):
         if not isinstance(ref,dict) or ref.get('kind') not in REF_KINDS or type(ref.get('version')) is not int:
             raise AppError('참조 자료의 종류·ID·버전이 필요합니다.')
@@ -49,7 +53,7 @@ class ResearchWorkspace:
                 'story_extractions':3,'status':'IMPLEMENTED_LIMITS','sample_limit_decision':'NOT_VALIDATED',
                 'reason':'현재 처리 상한입니다. 더 큰 예시 상한은 실제 모델·비용·품질 시험 후 결정합니다.'}}
 
-    def save_research_item(self, user, body, *, authorship='po_authored', expected_epoch=None):
+    def save_research_item(self, user, body, *, authorship='po_authored', expected_epoch=None, provenance=None):
         p=user['project_id'];epoch=self.store.epoch(p) if expected_epoch is None else expected_epoch
         old=self.research_item(user,body['item_id']) if body.get('item_id') else None
         data={**(old or {}),**body};kind=data.get('output_type')
@@ -94,6 +98,10 @@ class ResearchWorkspace:
             'change_reason':optional(data,'change_reason',3000),'reviewed_by':None,'reviewed_at':None,
             'access_scope':'project_private','withdrawn':False}
         fields['evidence_type']=cleaned.get('evidence_type','synthetic' if kind=='synthetic_debrief' else 'research')
+        fields.update(derived_nature(records+([old] if old else []),cleaned))
+        computed=computed_details(kind,cleaned)
+        if computed:fields['computed']=computed
+        if provenance:fields['interview_application']=provenance
         fields['text']=render_item(fields)
         self.planning_actor(user)
         if old:return self.store.write(p,updates=[('research_item',rid,fields,revision(body))],expected_epoch=epoch)[0]
@@ -109,7 +117,7 @@ class ResearchWorkspace:
         if not isinstance(refs,list) or not 1<=len(refs)<=100:raise AppError('분석할 검토 근거를 선택하세요.')
         sources=[self.research_ref(user,r,True) for r in refs]
         if any(r['kind']=='research_item' and r['research_id']!=brief['id'] for r in sources):raise AppError('같은 연구의 근거를 선택하세요.')
-        safe=[{k:r[k] for k in ('id','kind','version','title','text','evidence_type') if k in r} for r in sources]
+        safe=[{k:r[k] for k in ('id','kind','version','title','text','evidence_type','evidence_nature','contains_synthetic') if k in r} for r in sources]
         if len(json.dumps(safe,ensure_ascii=False))>100000:raise AppError('분석 범위를 줄여 주세요. 입력을 임의로 생략하지 않습니다.')
         result=self.generate('research_task',{'prompt':text(body,'prompt',5000),'brief':brief['fields'],
             'output_type':kind,'fields':TYPES[kind],'evidence':safe,
@@ -119,7 +127,10 @@ class ResearchWorkspace:
             key=value['key']
             if key not in TYPES[kind] or key in data:raise AppError('AI 산출물 필드가 계약과 다릅니다.',502)
             spec=TYPES[kind][key];v=value['text']
-            if spec['type']=='number':
+            if spec['type']=='rows':
+                try:v=json.loads(v) if v.strip() else []
+                except (ValueError,TypeError):raise AppError('AI 표 형식을 확인하지 못했습니다.',502)
+            elif spec['type']=='number':
                 try:v=float(v) if v.strip() else None
                 except ValueError:raise AppError('AI 측정값 형식을 확인하지 못했습니다.',502)
                 if v is not None and v.is_integer():v=int(v)
@@ -131,6 +142,10 @@ class ResearchWorkspace:
         if kind in ('measurement','metric'):
             data['value' if kind=='measurement' else 'baseline']=None
             data['unknown_reason']='AI 초안입니다. 실측 자료와 계산을 PO가 확인해야 합니다.'
+        if kind=='service_baseline':data['detail_level']='STRUCTURED'
+        if kind=='po_interview':
+            data['answers']=clean_fields(kind,{'answers':data.get('answers',[])})['answers']
+            for a in data['answers']:a.update(status='OPEN',answer='',proposed_text='',confirmed_at='',respondent_role='',effective_at='',scope='',evidence_note='',classification='UNVERIFIED')
         if kind=='uat':data['status']='NOT_RUN'
         if kind=='actual_study':data.update(actual_sample='',independent_participants=None,executed_at='',executor='',attestation=False)
         return self.save_research_item(user,{'title':result['title'],'output_type':kind,'task_id':body.get('task_id',''),
@@ -144,6 +159,26 @@ class ResearchWorkspace:
         refs=[self.research_ref(user,r,True) for r in row['input_refs']]
         f=row['fields'];kind=row['output_type']
         if row['applicability']=='applicable':
+            synthetic=synthetic_record(row) or any(synthetic_record(r) for r in refs)
+            if synthetic and (f.get('measurement_state')=='OBSERVED' or f.get('baseline_state')=='OBSERVED' or f.get('provenance')=='OBSERVED'
+                    or kind=='actual_study' and f.get('run_state')=='EXECUTED'
+                    or kind=='uat' and f.get('status') in ('PASS','FAIL')
+                    or kind=='po_interview' and f.get('nature')=='PO_REPORTED'
+                    or kind=='evidence' and (f.get('evidence_type') in ('REAL_VOC','INTERNAL_MEASUREMENT','PUBLIC_FACT') or f.get('supports_demand_validation'))):
+                errors.append('합성 입력은 실제 관측·공개 사실·고객 검증·UAT 실행으로 확정할 수 없습니다.')
+            if kind=='calculation':
+                allowed={r['id'] for r in refs if r['kind'] in ('insight','voc','research_item')}
+                if any(t['source_id'] not in allowed for t in f['terms']):errors.append('계산 입력마다 선택한 공유 근거 카드·VoC를 연결하세요.')
+            if kind=='funnel' and f['measurement_state']=='OBSERVED' and not refs:errors.append('관측 퍼널의 검토 근거를 연결하세요.')
+            if kind=='voc_coding':
+                allowed={r['id']:r for r in refs if r['kind'] in ('insight','voc','research_item')}
+                for v in f['records']:
+                    source=allowed.get(v['source_id'])
+                    if not source:errors.append('코딩 발언마다 선택한 공유 근거를 연결하세요.')
+                    elif v['nature']=='REAL' and (synthetic_record(source) or not (source['kind']=='voc' and source.get('evidence_type')=='real')):
+                        errors.append('실제 발언 코딩에는 현재 공유된 실제 VoC가 필요합니다.')
+            if kind=='po_interview' and not any(r['kind']=='research_item' and r['output_type']=='service_baseline' for r in refs):
+                errors.append('인터뷰에서 대조한 서비스 분석 버전을 연결하세요.')
             needs_sources=kind in ('source_manifest','evidence','numeric_claim','voc_finding','benchmark_source')
             if kind=='evidence' and f['evidence_type'] in ('ASSUMPTION','USER_REQUIREMENT'):needs_sources=False
             if needs_sources and not refs:errors.append('검토한 원문·근거를 연결하세요.')
@@ -215,6 +250,7 @@ class ResearchWorkspace:
                     and any(ref['id']==row['id'] for ref in c['input_refs'])]
                 status='CONFLICTED' if any(c['fields']['resolution_status']=='UNRESOLVED' for c in linked) else row['fields']['claim_status']
                 row={**row,'conflict_ids':[c['id'] for c in linked],'effective_claim_status':status}
+                row['text']=render_item(row)
             result.append(row)
         return result
 
@@ -247,12 +283,20 @@ class ResearchWorkspace:
         if stage not in ('research','development'):raise AppError('검토 단계를 확인하세요.')
         rows=self.pack_rows(user,pack);by_id={r['id']:r for r in rows}
         brief=by_id[pack['research_id']];checks=[];errors=[];warnings=[]
+        for conflict in self.store.list(user['project_id'],'research_item'):
+            if (conflict.get('output_type')=='conflict' and conflict.get('research_id')==pack['research_id']
+                    and conflict.get('state')=='reviewed' and conflict.get('applicability')=='applicable'
+                    and not conflict.get('withdrawn') and self.accessible(user['project_id'],conflict)
+                    and conflict['id'] not in by_id and any(r['id'] in by_id for r in conflict['input_refs'])):
+                errors.append('선택한 근거와 관련된 충돌 기록을 묶음에 포함하세요: '+conflict['id'])
         for task in brief['fields']['required_tasks']:
             candidates=[r for r in rows if r.get('task_id')==task]
             valid=bool(candidates) and all(not content_errors(r) for r in candidates)
             checks.append({'task_id':task,'title':TASKS[task][0],'complete':valid,
                 'item_ids':[r['id'] for r in candidates]})
             if not valid:errors.append(TASKS[task][0]+' 산출물 검토가 필요합니다.')
+            if task=='SV-02' and any(r['applicability']=='applicable' and r['fields'].get('detail_level')!='STRUCTURED' for r in candidates):
+                errors.append('기존 서비스 분석에 기능·권한·상태·데이터·지표 구조를 보완하세요.')
         active=[r for r in rows if r['applicability']=='applicable']
         nodes=[r for r in active if r['output_type'] in GRAPH_TYPES]
         by_type={t:[r for r in nodes if r['output_type']==t] for t in GRAPH_TYPES}
@@ -278,6 +322,20 @@ class ResearchWorkspace:
             for row in by_type[kind]:
                 if not any(any(l['id']==row['id'] and l['relation']!='refutes' for l in c['links']) for c in by_type[child]):
                     errors.append(row['title']+': '+graph_labels[child]+' 검증 연결이 없습니다.')
+        if stage=='development':
+            def supporting_evidence(row):
+                pending=[row];seen=set();evidence=[]
+                while pending:
+                    current=pending.pop()
+                    if current['id'] in seen:continue
+                    seen.add(current['id'])
+                    if current['output_type']=='evidence':evidence.append(current);continue
+                    pending.extend(by_id[link['id']] for link in current['links'] if link['relation']!='refutes' and link['id'] in by_id)
+                return evidence
+            for requirement in by_type['requirement']:
+                evidence=supporting_evidence(requirement)
+                if evidence and all(synthetic_record(e) or e['fields']['evidence_type'] in ('SYNTHETIC_FGI','ASSUMPTION') for e in evidence):
+                    errors.append(requirement['title']+': 합성·가정만 연결된 요구는 파일럿 제안이며 개발 준비 완료로 승격할 수 없습니다.')
         for row in active:
             f=row['fields'];kind=row['output_type']
             claim_status=row.get('effective_claim_status',f.get('claim_status'))
@@ -286,6 +344,12 @@ class ResearchWorkspace:
             if kind=='conflict' and f['resolution_status']=='UNRESOLVED':
                 warnings.append(row['title']+': 충돌 미해결 · '+f['owner'])
                 if stage=='development' and f['severity']=='BLOCKING':errors.append(row['title']+': 개발 차단 충돌')
+            topics=f.get('open_topics',[]) if kind=='service_baseline' else [a for a in f.get('answers',[]) if a['status']!='ANSWERED'] if kind=='po_interview' else []
+            for topic in topics:
+                warnings.append(row['title']+': '+topic['id']+' · '+topic['next_action'])
+                if stage=='development' and topic['needed_stage'] in ('RESEARCH','DEVELOPMENT'):errors.append(topic['id']+': 개발 전 PO 확인 필요')
+            if row.get('computed',{}).get('status') in ('UNKNOWN','NOT_COMPUTABLE','INVALID'):
+                warnings.append(row['title']+': 계산 미확인 · '+row['computed'].get('reason','입력을 확인하세요.'))
             if kind=='question' and f['status']=='OPEN':
                 warnings.append(row['title']+': '+f['next_action'])
                 if stage=='development' and f['needed_stage'] in ('RESEARCH','DEVELOPMENT'):errors.append(row['title']+': 개발 전 확인 필요')
@@ -314,14 +378,14 @@ class ResearchWorkspace:
         if pack['version']!=revision(body):raise AppError('묶음 버전이 변경됐습니다.',409)
         rows=self.pack_rows(user,pack);sections=[]
         areas={'evidence':['evidence'],'conflict':['evidence','questions'],'numeric_claim':['metrics'],
-            'metric':['metrics'],'problem':['evidence'],'story_candidate':['stories'],'requirement':['requirements'],
+            'metric':['metrics'],'calculation':['metrics','economics'],'funnel':['metrics','validation'],'voc_coding':['evidence','users'],'po_interview':['decision','questions'],'problem':['evidence'],'story_candidate':['stories'],'requirement':['requirements'],
             'acceptance':['requirements'],'uat':['validation'],'question':['questions'],'utility':['economics']}
         for section_id,title in PRD_SECTIONS.items():
             selected=[r for r in rows if section_id in (TASKS[r['task_id']][2] if r.get('task_id') else areas.get(r['output_type'],[]))]
             content='\n\n'.join(r['title']+'\n'+render_item(r)+'\n['+r['id']+']' for r in selected)
             sections.append({'id':section_id,'title':title,'text':content,'evidence_ids':[r['id'] for r in selected],
                 'coverage_status':'written' if selected else 'needs_work','na_reason':''})
-        fields={'stage':'prd','title':text(body,'title',200),'sections':sections,'questions':[],
+        fields={**derived_nature(rows),'stage':'prd','title':text(body,'title',200),'sections':sections,'questions':[],
             'assumptions':['선택한 검토 산출물을 배치한 연구 초안. 고객 검증·개발 승인·UAT 실행을 뜻하지 않습니다.'],
             'story_refs':[],'research_pack_ref':{'id':pack['id'],'version':pack['version']},'research_id':pack['research_id'],
             'state':'draft','dependencies':lineage(rows)+[{'kind':'research_pack','id':pack['id'],'version':pack['version']}],
@@ -345,7 +409,7 @@ class ResearchWorkspace:
         ids={r['id'] for r in rows};safe=[]
         for r in rows:
             item={k:r[k] for k in ('id','version','title','output_type','task_id','fields','applicability','na_reason','reviewed_by','reviewed_at','change_reason')}
-            for key in ('conflict_ids','effective_claim_status'):
+            for key in ('conflict_ids','effective_claim_status','evidence_nature','contains_synthetic','computed','interview_application'):
                 if key in r:item[key]=r[key]
             item['links']=[l for l in r['links'] if l['kind']=='research_item' and l['id'] in ids]
             safe.append(item)

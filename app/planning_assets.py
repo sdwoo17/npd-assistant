@@ -9,6 +9,7 @@ from pathlib import Path
 from .contracts import text, optional, revision, strings
 from .ingest import decode_file
 from .source_locations import document_locations
+from .research_provenance import upload_nature, derived_nature
 from .story_contracts import IMAGE_LIMIT, IMAGE_PIXELS, IMAGE_EDGE, objects
 from .store import AppError
 from .planning_regions import PlanningRegions, image_view, validated_regions
@@ -100,9 +101,12 @@ class PlanningAssets(PlanningRegions):
             locations=document_locations(body,content)
         digest = hashlib.sha256(raw).hexdigest()
         purpose = body.get('purpose', 'story_sketch')
-        if purpose not in ('story_sketch', 'existing_service', 'actual_fgi', 'internal_voc'):
+        if purpose not in ('story_sketch', 'existing_service', 'actual_fgi', 'internal_voc', 'customer_research'):
             raise AppError('기획 자료의 용도를 확인하세요.')
         old = self.asset(user, body['asset_id']) if body.get('asset_id') else None
+        nature=upload_nature(body,content,old)
+        if old and old.get('source_nature') in ('SYNTHETIC','MIXED') and old['hash']==digest and nature=='OBSERVED':
+            raise AppError('동일 합성 원본을 실제 관측으로 변경할 수 없습니다.')
         if old and purpose != old['purpose']:
             raise AppError('원본의 용도를 변경하려면 별도 자료로 업로드하세요.')
         duplicate = next((r for r in self.store.list(p, 'planning_asset') if r['hash'] == digest and r['purpose'] == purpose and not r.get('withdrawn')), None)
@@ -122,6 +126,7 @@ class PlanningAssets(PlanningRegions):
             'encrypted_preview': self.store.encrypt(base64.b64encode(preview).decode()), 'image': image_info,
             'sharing': 'project_private', 'customer_validation': 'unverified', 'dependencies': []}
         fields['source_locations']=locations
+        fields['source_nature']=nature
         try:
             self.planning_actor(user)
             if old:
@@ -178,7 +183,7 @@ class PlanningAssets(PlanningRegions):
         try:
             if asset['media_type'] == 'image':
                 result = self.generate('planning_image', {'prompt': prompt, 'asset_id': asset['id'],
-                    'image': view, 'original_image': asset['image'], 'source_is': 'untrusted planning intention; not customer evidence'},
+                    'image': view, 'original_image': asset['image'], 'source_nature':asset.get('source_nature','UNVERIFIED'), 'source_is': 'untrusted planning intention; not customer evidence'},
                     images=[{'format': 'jpeg', 'bytes': image_bytes}])
             else:
                 content = self.store.decrypt(asset['encrypted_text'])
@@ -190,7 +195,7 @@ class PlanningAssets(PlanningRegions):
                 raise AppError('읽을 수 있는 내용이 없습니다. 사진 또는 텍스트를 보충하세요.', 422)
             self.planning_actor(user)
             saved = self.store.write(p, updates=[('extraction_run', run['id'], {'status':'completed',
-                'transcript':transcript,'regions':regions,'relations':relations,'quality_issues':strings(result['quality_issues'],30),
+                **derived_nature([asset]), 'transcript':transcript,'regions':regions,'relations':relations,'quality_issues':strings(result['quality_issues'],30),
                 'questions':objects(result['questions'],40,'확인 질문'), 'review_status':'source_check_required'}, run['version'])],
                 expected_epoch=epoch, checks=[('planning_asset',asset['id'],asset['version'])])[0]
             return saved

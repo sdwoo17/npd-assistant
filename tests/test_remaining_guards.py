@@ -131,7 +131,7 @@ class RemainingGuards(unittest.TestCase):
     def test_selecting_another_review_invalidates_old_proposal(self):
         conv = self.discussion()
         first = self.review(self.debrief(conv))
-        self.review(self.debrief(conv))
+        self.review(self.s.make_debrief(self.po, {'conversation_id': conv['id'], 'regenerate': True, 'reason': '검토본 후보 비교'}))
         proposal = self.proposal(conv)
         current = self.s.conversation(self.po, conv['id'])
         self.s.select_debrief(self.po, {'conversation_id': conv['id'], 'expected_version': current['version'],

@@ -6,6 +6,7 @@ from .ingest import decode_file, chunks
 from .store import AppError
 from .source_locations import document_locations, clean_locator
 from .research_contracts import EVIDENCE_TYPES
+from .research_provenance import upload_nature, derived_nature, synthetic_record
 
 
 def owner(user):
@@ -62,6 +63,9 @@ class Research:
             fields = {"filename": filename, "title": text(body, "title", 200), "encrypted_text": self.store.encrypt(content),
                 "encrypted_file": self.store.encrypt(body["content_base64"]), "hash": digest, "owner_id": user["id"], "status": "extracted", "policy": policy}
             fields['source_locations']=document_locations(body,content)
+            fields['source_nature']=upload_nature(body,content,old)
+            if old and old.get('source_nature') in ('SYNTHETIC','MIXED') and old['hash']==digest and fields['source_nature']=='OBSERVED':
+                raise AppError('동일 합성 원본을 실제 관측으로 변경할 수 없습니다.')
             if body.get("source_id"):
                 old = self.store.get(p, "source", body["source_id"])
                 fields["content_version"] = old.get("content_version", 1) + 1
@@ -107,6 +111,7 @@ class Research:
         if fields['evidence_type'] in EVIDENCE_TYPES:
             fields['evidence_category']=fields['evidence_type']
             fields['evidence_type']='synthetic' if fields['evidence_category']=='SYNTHETIC_FGI' else 'research'
+        fields.update(derived_nature([source,old,fields]))
         valid_positions={(r['locator'],r['start'],r['end']) for r in source.get('source_locations',{}).get('parts',[])}
         if any((r['locator'],r['start'],r['end']) not in valid_positions for r in fields['source_locator']['parts']):
             raise AppError('현재 원문의 위치를 선택하세요.')
@@ -134,6 +139,8 @@ class Research:
             r = self.store.get(p, "insight", rid)
             if body["published"]:
                 s = self.store.get(p, "source", r["source_id"])
+                if (synthetic_record(s) or synthetic_record(r)) and r.get('evidence_category') in ('REAL_VOC','INTERNAL_MEASUREMENT','PUBLIC_FACT'):
+                    raise AppError('합성 원본을 실제 관측·공개 사실로 배포할 수 없습니다.',409)
                 if s.get("policy") == "amazon_internal":
                     raise AppError("아마존 비공개 내부 자료는 공개 근거로 전환할 수 없습니다.", 403)
                 if r.get("source_version", 1) != s.get("content_version", 1):
@@ -163,7 +170,7 @@ class Research:
                 start=full_text.find(chunk,cursor);end=start+len(chunk);cursor=end
                 locations=[r for r in source.get('source_locations',{}).get('parts',[]) if r['start']<end and r['end']>start]
                 self.store.assert_epoch(p, epoch)
-                result = self.generate("insights", {"document": chunk, "chunk": index + 1, "chunks": len(segments),
+                result = self.generate("insights", {"document": chunk, 'source_nature':source.get('source_nature','UNVERIFIED'), "chunk": index + 1, "chunks": len(segments),
                     "taxonomy": self.features(p), "purpose": "소유자 검토용 비공개 초안"})
                 if not 1 <= len(result["insights"]) <= 8:
                     raise AppError("청크별 인사이트 수는 1~8개여야 합니다.", 502)
@@ -172,7 +179,7 @@ class Research:
                     key = hashlib.sha256(fields["text"].encode()).hexdigest()
                     if key not in seen:
                         seen.add(key)
-                        drafts.append(("insight", {**fields, "source_id": source["id"], "source_version": source.get("content_version", 1),
+                        drafts.append(("insight", {**fields, **derived_nature([source,{'evidence_type':body.get('evidence_type')}]), "source_id": source["id"], "source_version": source.get("content_version", 1),
                             'source_locator':clean_locator({'parts':locations}),
                             'evidence_category':'SYNTHETIC_FGI' if body.get('evidence_type')=='synthetic' else 'ATTACHMENT_STATEMENT',
                             "evidence_type": body.get("evidence_type", "research"), "chunk": index + 1, "job_id": job["id"]}, None))

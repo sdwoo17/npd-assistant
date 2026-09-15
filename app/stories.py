@@ -6,6 +6,7 @@ from .contracts import text, optional, strings, revision, dependency_map, valida
 from .story_contracts import STORY_FIELDS, objects, story_fields
 from .store import AppError, timestamp
 from .story_recovery import StoryRecovery
+from .research_provenance import derived_nature, synthetic_record
 
 
 def lineage(records):
@@ -87,6 +88,7 @@ class Stories(StoryRecovery):
                     'original_value':prior.get('original_value',old.get(key) if old else fields[key])}
         allowed={r['id'] for r in records}
         validate_citations(json.dumps(fields,ensure_ascii=False),allowed)
+        fields.update(derived_nature(records+([old] if old else [])))
         fields.update(**links,dependencies=(old.get("dependencies",[]) if old else [])+lineage(records),provenance=provenance,
             definition_status='draft',customer_validation=('planned' if old and old.get('customer_validation')=='actual_results' and any(
                 fields[k]!=old.get(k) for k in ('actor','action','value','situation','problem','scenarios','acceptance_criteria'))
@@ -143,6 +145,8 @@ class Stories(StoryRecovery):
             raise AppError('실제 조사 여부를 PO가 확인한 현재 FGI 검토본을 선택하세요.',409)
         if len(evidence)!=len(evidence_ids) or (state=='actual_results' and ((not evidence and not results) or any(e['evidence_type']!='real' for e in evidence))):
             raise AppError('실제 검증 결과에는 현재 공개된 실제 고객 근거를 연결하세요. 가상 FGI는 사용할 수 없습니다.',409)
+        if state=='actual_results' and any(synthetic_record(r) for r in evidence+results):
+            raise AppError('합성 근거는 실제 검증 결과가 될 수 없습니다.',409)
         self.planning_actor(user)
         return self.store.write(p,updates=[('user_story',row['id'],{'customer_validation':state,
             'validation_note':note,'validation_evidence_ids':evidence_ids,'validation_result_ids':result_ids,
@@ -209,6 +213,7 @@ class Stories(StoryRecovery):
                     if not region or not ref['quote'] or ref['quote'] not in region['text']:
                         raise AppError('추출 필드가 원본 전사·영역과 일치하지 않습니다.',502)
                     provenance[ref['field']]={**ref,'asset_version':run['asset_version'],'extraction_id':run['id'],'bbox':region['bbox'],'original_value':fields[ref['field']]}
+            fields.update(derived_nature(records+context_records+([base] if base else [])))
             fields.update(provenance=provenance,evidence_ids=ids)
             validate_citations(json.dumps(fields,ensure_ascii=False),{r['id'] for r in records})
             candidates.append(fields)
@@ -218,7 +223,7 @@ class Stories(StoryRecovery):
         checks=[('user_story',base['id'],base['version'])] if base else []
         return self.store.write(p,inserts=[('story_draft',{'prompt':prompt,'prompt_version':'story-drafts-v1','model':self.model.model,
             'research_id':context['research_packs'][0]['research_id'] if context.get('research_packs') else None,
-            'stories':candidates,'extraction_ids':run_ids,'links':links,'dependencies':dependencies,
+            **derived_nature(records+context_records),'stories':candidates,'extraction_ids':run_ids,'links':links,'dependencies':dependencies,
             'base_story':{'id':base['id'],'version':base['version']} if base else None,
             'assumptions':result['assumptions'],'created_by':user['id']},None)],expected_epoch=epoch,checks=checks)[0]
 
@@ -261,6 +266,7 @@ class Stories(StoryRecovery):
         else:
             fields={k:candidate[k] for k in allowed}
             provenance=candidate['provenance'];links=draft['links'];deps=draft['dependencies']
+        fields.update(derived_nature([draft,candidate]+([base] if base else [])))
         fields.update(**links,provenance=provenance,dependencies=deps,definition_status='draft',
             customer_validation=('planned' if base and base.get('customer_validation')=='actual_results' else base.get('customer_validation','unverified') if base else 'unverified'),
             confirmed_version=base.get('confirmed_version') if base else None,
@@ -295,7 +301,7 @@ class Stories(StoryRecovery):
         for child in children:
             fields=story_fields({**origin,**child})
             validate_citations(json.dumps(fields,ensure_ascii=False),{r['id'] for r in records})
-            prepared.append(('user_story',{**fields,**links,'provenance':{k:{'origin':'po_edited','original_value':v} for k,v in fields.items()},
+            prepared.append(('user_story',{**fields,**links,**derived_nature(records+sources),'provenance':{k:{'origin':'po_edited','original_value':v} for k,v in fields.items()},
                 'definition_status':'draft','customer_validation':'unverified','confirmed_version':None,
                 'derived_from':[{'id':r['id'],'version':r['version']} for r in sources],
                 'dependencies':lineage(records)+[d for source in sources for d in source.get('dependencies',[])],'created_by':user['id']},'STORY-'+uuid.uuid4().hex))
@@ -311,7 +317,7 @@ class Stories(StoryRecovery):
                 raise AppError('확정된 스토리의 명시적 버전을 선택하세요.',409)
             keep=set(STORY_FIELDS)|{'id','version','scenarios','acceptance_criteria','questions','assumptions','evidence_ids',
                 'source_refs','persona_refs','document_refs','mvp','new_problem','definition_status','customer_validation',
-                'confirmed_at','confirmed_by','dependencies'}
+                'confirmed_at','confirmed_by','dependencies','evidence_nature','contains_synthetic'}
             stories.append({k:v for k,v in row.items() if k in keep})
         if not stories:
             raise AppError('내보낼 확정 스토리를 선택하세요.')
@@ -319,7 +325,7 @@ class Stories(StoryRecovery):
             'disclosure':'설계안 확정은 실제 고객 검증이 아닙니다. 기획 원본·전사·이미지는 제외했습니다. AXIOM 수신 규격 검증은 별도입니다.'}
         lines=['# 사용자 스토리 설계안',package['disclosure']]
         for row in stories:
-            lines.extend(['','## '+row['title'],row['id']+' v'+str(row['version']),
+            lines.extend(['','## '+row['title'],'자료 성격: '+row.get('evidence_nature','UNVERIFIED'),row['id']+' v'+str(row['version']),
                 '사용자: '+row['actor'],'행동: '+row['action'],'가치: '+row['value'],'문제: '+row['problem'],
                 '고객 검증: '+row['customer_validation']])
             for s in row['scenarios']:lines.append(s['type']+' · '+s['title']+': '+' → '.join(s['steps'])+' '+s['branch'])

@@ -4,6 +4,9 @@ from .contracts import text, revision
 from .store import AppError
 
 
+from .research_provenance import derived_nature
+
+
 class StoryRecovery:
     def source_recovery_state(self, user, rid):
         p = user['project_id']
@@ -63,7 +66,7 @@ class StoryRecovery:
             raise AppError('확인 질문이 40개입니다. 정리한 새 스토리로 검토하세요.', 409)
         questions.append({'id': 'source-review-'+review['id'], 'text': '변경된 기획 원본의 역할·조건·수용 기준과 이전 출처를 다시 확인했나요?',
             'critical': True, 'status': 'unanswered', 'answer': ''})
-        updates = {'dependencies': deps, 'source_refs': [{'id': r['id'], 'version': source_versions[r['id']]} for r in row['source_refs']],
+        updates = {**derived_nature([row]+[c['current'] for c in changes]), 'dependencies': deps, 'source_refs': [{'id': r['id'], 'version': source_versions[r['id']]} for r in row['source_refs']],
             'provenance': provenance, 'questions': questions, 'definition_status': 'draft',
             'customer_validation': 'planned' if row.get('customer_validation') == 'actual_results' else row.get('customer_validation', 'unverified'),
             'source_review': {'id': review['id'], 'changes': review['changes'], 'note': note, 'reviewed_by': user['id']},

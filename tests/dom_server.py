@@ -7,8 +7,8 @@ from tests.helpers import Fixture, encoded
 
 def main():
     fixture = Fixture()
-    from tests.test_stage2 import PlanningModel
-    fixture.service.model = PlanningModel()
+    from tests.test_research_flow import FlowModel
+    fixture.service.model = FlowModel()
     fixture.store.create_user("owner@example.test", "Owner-test-pass!", "owner", "project-a")
     fixture.store.create_user("po@example.test", "Planner-test-pass!", "po", "project-a")
     fixture.persona()

@@ -127,3 +127,19 @@ Citation inspection recognizes bracketed UUID IDs and reserved entity prefixes (
 Moving a feature to another service returns 409 when any project insight or VoC still uses that feature. The entire taxonomy import rolls back. An unused feature can move. Reclassify references explicitly before attempting a move.
 
 Bootstrap also returns persona_pool_count (all non-archived profiles) and unavailable_personas (redacted IDs/versions only). A PO can archive a revoked profile to free capacity without viewing its old content. Restoring it requires valid current evidence.
+
+## Detailed research and PO interviews (2026-09-15)
+
+Research schema `npd.research.v2` adds structured service tables and the `po_interview`, `calculation`, `funnel`, and `voc_coding` output types. `GET /api/research-workspace` returns the complete field/column contracts, including required values and row limits. Existing item save/review, selected pack, readiness, compose and export APIs remain in use. Drafts may be incomplete; review enforces the contract.
+
+| Route | Request / result |
+| --- | --- |
+| GET /api/research-workspace/history/{id} | Version history; stale or withdrawn dependencies yield redacted entries |
+| POST /api/research-workspace/interview/start | baseline_id, expected_version, title; draft questions from the reviewed baseline, always NOT_RUN |
+| POST /api/research-workspace/interview/apply | interview_id, expected_version, baseline_id, baseline_version, answer_ids, title, reason; new draft baseline with selected reviewed answers and before/after history |
+
+Upload APIs `/api/planning-assets` and `/api/research/upload` accept `source_nature`: UNVERIFIED (default), SYNTHETIC, OBSERVED, MIXED. An explicit whole-document synthetic declaration is conservatively labeled synthetic; detected synthetic content cannot be uploaded as observed. Downstream nature labels are derived on the server and are not customer-validation attestations.
+
+Rows are JSON arrays, not serialized JSON strings, on the normal save API. Each row has a unique nonempty `id` at review. Numeric cells accept finite JSON numbers or null; null means unknown. Calculation terms link selected shared evidence IDs and source locations. The server returns `computed` values, including noncomputable/unknown states. Model `research_task` uses the existing key/text envelope with JSON-encoded row arrays; the server parses these into the same contract and never accepts model-certified execution.
+
+`POST /api/definitions/readiness` accepts `stage: research|development`. Questions accept `needed_stage: RESEARCH|DEVELOPMENT|RELEASE` (default DEVELOPMENT); development readiness rejects unresolved research/development questions even when an owner and next action exist. [Detailed behavior and validation boundaries](existing-service-research-2026-09-15.md).

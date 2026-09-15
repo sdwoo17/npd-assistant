@@ -20,6 +20,7 @@ before(async () => {
   [html,script] = await Promise.all(["/","/app.js"].map(path => fetch(origin+path).then(r=>r.text())));
   script += "\n" + await fetch(origin+"/planning.js").then(r=>r.text());
   script += "\n" + await fetch(origin+"/research-workspace.js").then(r=>r.text());
+  script += "\n" + await fetch(origin+"/research-flow.js").then(r=>r.text());
 });
 
 after(async () => {
@@ -180,7 +181,9 @@ test("PO completes the five-stage FGI and checks an external PRD without storing
   const study=(await request("/api/studies")).studies.find(r=>r.title==="DOM 합성 연구");
   const exported=await request("/api/export/"+study.conversation_id+"?format=markdown");
   assert.match(exported.text,/디브리프 체크리스트/);
-  await click(byText($("study-detail"),"검토본으로 PRD 변경 제안 생성"));
+  assert.equal(byText($("study-detail"),"검토본으로 PRD 변경 제안 생성"),undefined);
+  await click(byText($("study-detail"),"완료 FGI로 후속 분석 대화 시작"));
+  await click(w.document.querySelector("[data-page='prd']"));
   const evidence=await request("/api/evidence");
   $("citation-check-text").value=`PRIVATE-PASTED-PRD [${evidence[0].id}] [${evidence[0].id}] v999 [INS-ADS-UNKNOWN]`;
   await submit($("citation-check-form"));

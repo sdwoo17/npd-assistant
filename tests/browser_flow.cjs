@@ -234,6 +234,8 @@ test("browser: @ autocomplete, persona created through chat, project isolation a
       "소재 리포트 근거가 필요한 광고주 페르소나를 만들어 주세요.",
     );
     await nav(page, "personas");
+    await page.locator("#persona-draft-workspace .flow-proposals input[type=checkbox]").first().check();
+    await page.getByRole("button", {name:"선택한 초안만 페르소나 풀에 등록"}).first().click();
     await page.locator("#persona-list").getByText("@생성광고주 · v1").waitFor();
     await nav(page, "chat");
     await page.selectOption("#chat-action", "ask");
@@ -583,6 +585,7 @@ test("browser: scoped research forms preserve PO edits, select a pack and show r
     await page.locator("#research-workspace details summary").filter({hasText:"Synthetic research pack"}).click();
     response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/select"));
     await page.getByRole("button",{name:"PRD 작성에 이 버전 사용",exact:true}).click();assert.equal((await response).status(),201);
+    await page.locator("#notice").filter({hasText:"이 연구 묶음을 후속 기획의 기준으로 선택했습니다."}).waitFor();
     await page.locator("#research-workspace details summary").filter({hasText:"Synthetic research pack"}).click();
     response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/gate"));
     await page.getByRole("button",{name:"연구 준비 검사",exact:true}).click();
@@ -590,8 +593,125 @@ test("browser: scoped research forms preserve PO edits, select a pack and show r
     await page.getByText("보완이 필요합니다",{exact:true}).waitFor();
     await page.screenshot({path:"test-results/stage1-research-desktop.png",fullPage:true});
     await page.setViewportSize({width:390,height:844});
+    await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth+1);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
     await page.screenshot({path:"test-results/stage1-research-mobile.png",fullPage:true});
     assert.deepEqual(errors,[]);
   }catch(error){console.error("Stage 1 notice:",await page.locator("#notice").textContent());await page.screenshot({path:"test-results/stage1-failure.png",fullPage:true});throw error;}finally{await ctx.close();}
+});
+
+test("browser: source nature, detailed baseline interview and ratio rows survive real HTTP review",async()=>{
+  const {ctx,page,errors}=await login("po");
+  try{
+    await nav(page,"baseline");
+    await page.getByRole("combobox",{name:"문서 자료 성격"}).selectOption("SYNTHETIC");
+    await page.getByLabel("문서 추가 · 파일당 3MB, 한 번에 최대 10개",{exact:true}).setInputFiles({name:"synthetic-nature.md",mimeType:"text/markdown",buffer:Buffer.from("Synthetic UI document only")});
+    let response=page.waitForResponse(r=>r.url().endsWith("/api/planning-assets")&&r.request().method()==="POST");
+    await page.getByRole("button",{name:"문서 업로드",exact:true}).click();
+    const uploaded=await response;assert.equal(uploaded.status(),201);assert.equal((await uploaded.json()).source_nature,"SYNTHETIC");
+    await page.getByRole("checkbox",{name:/synthetic-nature.md/}).waitFor();
+    await page.getByLabel("문서 추가 · 파일당 3MB, 한 번에 최대 10개",{exact:true}).setInputFiles([
+      {name:"valid.md",mimeType:"text/markdown",buffer:Buffer.from("Synthetic valid batch input")},
+      {name:"unsupported.bin",mimeType:"application/octet-stream",buffer:Buffer.from("Unsupported fixture")},
+      {name:"another.txt",mimeType:"text/plain",buffer:Buffer.from("Synthetic valid second input")}
+    ]);
+    await page.getByRole("button",{name:"문서 업로드",exact:true}).click();
+    await page.getByRole("checkbox",{name:/valid.md/}).waitFor();
+    await page.getByRole("checkbox",{name:/another.txt/}).waitFor();
+    await page.locator("#notice").getByText(/unsupported.bin/).waitFor();
+    // Seed only prerequisite records through the authenticated API; exercise interview and numeric editing in UI.
+    const seeded=await page.evaluate(async()=>{
+      const contracts=await api("/api/research-workspace");
+      const fill=schema=>Object.fromEntries(Object.entries(schema).map(([key,s])=>[key,s.type==="rows"?[]:s.type==="lines"?["RS-00"]:s.type==="checkbox"?false:s.type==="number"?null:s.type==="select"?s.options[0]:"Synthetic prerequisite; unknown unless specified"]));
+      async function reviewed(body){let row=await api("/api/research-workspace/items",body);return api("/api/research-workspace/items/review",{item_id:row.id,expected_version:row.version,reason:"Synthetic UI prerequisite review"});}
+      const brief=await reviewed({output_type:"brief",title:"Synthetic interview UI scope",fields:fill(contracts.types.brief)});
+      const fields=fill(contracts.types.service_baseline);fields.detail_level="STRUCTURED";
+      for(const [key,s] of Object.entries(contracts.types.service_baseline))if(s.type==="rows"&&s.required)fields[key]=[{...fill(s.columns),id:key+"-1"}];
+      fields.open_topics=[{id:"Q1",question:"Synthetic future option?",owner:"PO",needed_stage:"DEVELOPMENT",next_action:"Interview the PO"}];
+      const baseline=await reviewed({output_type:"service_baseline",task_id:"SV-02",research_id:brief.id,title:"Synthetic detailed baseline",fields});
+      const evidence=await reviewed({output_type:"evidence",research_id:brief.id,title:"Synthetic calculation source",fields:{...fill(contracts.types.evidence),evidence_type:"ASSUMPTION"}});
+      return {brief,baseline,evidence};
+    });
+    await nav(page,"research-workspace");
+    await page.getByLabel("조사 범위",{exact:true}).selectOption(seeded.brief.id);
+    await page.getByRole("button",{name:"Synthetic detailed baseline · v2 · 검토 완료",exact:true}).click();
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/interview/start"));
+    await page.getByRole("button",{name:"미결 질문으로 PO 인터뷰 준비",exact:true}).click();
+    assert.equal((await response).status(),201);
+    await page.getByLabel("인터뷰 실행 · 검토 시 필수",{exact:true}).selectOption("EXECUTED");
+    await page.getByLabel("인터뷰 자료 성격 · 검토 시 필수",{exact:true}).selectOption("SYNTHETIC");
+    await page.getByLabel("답변 상태",{exact:true}).selectOption("ANSWERED");
+    for(const [label,value] of [["답변","Synthetic wish, not existing behavior"],["답변자 역할","Synthetic PO"],["확인 날짜","2026-01-03"],["변경 적용일·미확인 이유","Future date undecided"],["적용 대상·예외","Synthetic scope only"],["추가 근거·없음·추가 확인","No actual interview evidence; UI test"],["검토할 반영 문장","Proposed future feature"]])await page.getByLabel(label,{exact:true}).fill(value);
+    await page.getByLabel("문서와의 관계",{exact:true}).selectOption("FUTURE_REQUEST");
+    await page.getByLabel("반영할 분석 항목",{exact:true}).selectOption("proposed");
+    await page.getByLabel("변경·검토 이유",{exact:true}).fill("Synthetic UI review");
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/items/review"));
+    await page.getByRole("button",{name:"내용 저장 후 검토 완료",exact:true}).click();
+    const interview=await response;assert.equal(interview.status(),201,await interview.text());
+    await page.getByLabel("반영할 확인 답변",{exact:true}).selectOption(["Q1"]);
+    await page.getByLabel("반영 이유",{exact:true}).fill("Synthetic selective future proposal");
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/interview/apply"));
+    await page.getByRole("button",{name:"선택한 답변으로 별도 개정안 작성",exact:true}).click();
+    const applied=await response;assert.equal(applied.status(),201,await applied.text());
+    const revised=await applied.json();assert.notEqual(revised.id,seeded.baseline.id);assert.equal(revised.state,"draft");assert.ok(revised.fields.proposed.includes("향후 희망사항"));
+    await page.getByLabel("작성할 산출물",{exact:true}).selectOption("calculation");
+    await page.getByRole("button",{name:"새 산출물",exact:true}).click();
+    await page.getByLabel("산출물 제목",{exact:true}).fill("Synthetic aggregate ratio");
+    await page.getByLabel("계산 방식 · 검토 시 필수",{exact:true}).selectOption("RATIO_OF_SUMS");
+    await page.getByLabel("입력 자료 상태 · 검토 시 필수",{exact:true}).selectOption("SYNTHETIC");
+    for(const label of ["분자의 의미·단위","분모의 의미·단위","결과 단위","대상·집계 단위","같은 측정 기간·시간대","합산 가능한 이유·중복 제외","귀속·관측 기간·잠정 여부","검토 책임자"])await page.getByLabel(label+" · 검토 시 필수",{exact:true}).fill("Synthetic test context");
+    for(let i=0;i<2;i++){
+      await page.getByRole("button",{name:"합산할 분자와 분모 행 추가",exact:true}).click();
+      for(const [label,value] of [["입력 ID","N"+i],["분자 값",i?"300":"200"],["분모 값",i?"300":"100"],["선택한 근거 ID",seeded.evidence.id],["원문 위치","Synthetic table row "+i]])await page.getByLabel(label,{exact:true}).nth(i).fill(value);
+    }
+    await page.getByLabel("참조할 검토 자료·원본",{exact:true}).selectOption([seeded.evidence.id]);
+    await page.getByLabel("변경·검토 이유",{exact:true}).fill("Synthetic ratio review");
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/items")&&r.request().method()==="POST");
+    await page.getByRole("button",{name:"초안 저장",exact:true}).click();assert.equal((await response).status(),201);
+    await page.getByText(/합산 분자 500 \/ 합산 분모 400 · 결과 1.25/).waitFor();
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/items/review"));
+    await page.getByRole("button",{name:"내용 저장 후 검토 완료",exact:true}).click();assert.equal((await response).status(),201);
+    await page.getByRole("button",{name:"버전 이력 보기",exact:true}).click();
+    await page.locator("#research-workspace pre").first().waitFor();
+    await page.screenshot({path:"test-results/detailed-research-desktop.png",fullPage:true});
+    await page.setViewportSize({width:390,height:844});
+    await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth+1);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),JSON.stringify(await page.evaluate(()=>[...document.querySelectorAll("body *")].filter(e=>e.getBoundingClientRect().right>innerWidth+1&&e.getBoundingClientRect().width>0).map(e=>({tag:e.tagName,id:e.id,cls:e.className,right:e.getBoundingClientRect().right})).slice(0,20))));
+    await page.screenshot({path:"test-results/detailed-research-mobile.png",fullPage:true});
+    assert.deepEqual(errors,[]);
+  }catch(error){console.error("Detailed research notice:",await page.locator("#notice").textContent());await page.screenshot({path:"test-results/detailed-research-failure.png",fullPage:true});throw error;}finally{await ctx.close();}
+});
+
+
+test("browser: document context, selective interview, report Edit and PRD input selection",async()=>{
+ const {ctx,page,errors}=await login("po");
+ try {
+  await page.locator(".sidebar details summary").click();await page.fill("#project-title","문서 인터뷰 검증");await page.locator("#project-create button").click();
+  await page.waitForFunction(()=>document.querySelector("#project-name").textContent==="문서 인터뷰 검증");await nav(page,"baseline");
+  assert.equal(await page.locator("#flow-project").textContent(),"문서 인터뷰 검증");
+  await page.getByLabel("문서 추가 · 파일당 3MB, 한 번에 최대 10개").setInputFiles({name:"context-demo.md",mimeType:"text/markdown",buffer:Buffer.from("Synthetic: advertiser compares conditions; operator checks approval.")});
+  await page.getByRole("combobox",{name:"문서 자료 성격"}).selectOption("SYNTHETIC");await page.getByRole("button",{name:"문서 업로드",exact:true}).click();
+  await page.getByRole("checkbox",{name:/context-demo.md/}).check();await page.getByRole("button",{name:"선택 문서에서 서비스 내용 추출"}).click();
+  await page.getByLabel("제품 이름",{exact:true}).waitFor();assert.equal(await page.getByLabel("제품 이름",{exact:true}).inputValue(),"시연 서비스");
+  const details=await page.getByLabel("상세 서비스 설명",{exact:true}).inputValue();
+  await page.getByLabel("제품 이름",{exact:true}).fill("검토 제품");await page.click("#flow-save");await page.waitForFunction(()=>document.querySelector("#flow-save-state").textContent==="저장 완료");
+  await page.getByLabel("확인하거나 추가할 서비스 설명").fill("향후 조건 저장을 원합니다.");await page.getByRole("button",{name:"인터뷰 보내기"}).click();
+  await page.getByRole("button",{name:"선택한 변경 적용 · 나머지는 제외"}).click();
+  await page.waitForFunction(()=>document.querySelector('[name="proposed"]')?.value.includes("향후 조건 저장"));assert.equal(await page.getByLabel("상세 서비스 설명",{exact:true}).inputValue(),details);
+  await page.getByLabel("보고서 제목",{exact:true}).fill("검토한 서비스 보고서");await page.getByRole("button",{name:"보고서 생성 · 검토본 저장"}).click();
+  await page.getByRole("checkbox",{name:/검토한 서비스 보고서/}).check();await page.getByRole("button",{name:"선택한 버전을 PRD 입력으로 저장"}).click();
+  await page.waitForFunction(()=>document.querySelector("#notice").textContent.includes("PRD 참고 결과와 버전"));
+  await page.locator('[data-stage="definition"]').click();await page.getByRole("heading",{name:"PRD에 사용할 리서치 결과"}).waitFor();
+  assert.equal(await page.getByRole("checkbox",{name:/검토한 서비스 보고서/}).isChecked(),true);
+  await page.getByRole("button",{name:"AI초안작성",exact:true}).click();await page.locator("#draft-prompt").fill("선택한 서비스 결과로 개선 방향을 정리해 주세요.");
+  // Use the existing prompt dialog's submit action.
+  await page.locator("#draft-prompt-form button[type=submit]").click();
+  await page.getByRole("button",{name:/선택한 서비스 결과로 개선 방향/}).waitFor();
+  await nav(page,"results");await page.locator("#results-workspace").getByText("내용·근거 확인",{exact:true}).click();await page.locator("#results-workspace").getByRole("button",{name:"Edit · 문맥과 인터뷰로 수정"}).click();
+  await page.getByLabel("제품 이름",{exact:true}).waitFor();assert.equal(await page.getByLabel("제품 이름",{exact:true}).inputValue(),"검토 제품");
+  assert.match(await page.locator(".flow-transcript").textContent(),/향후 조건 저장/);
+  await page.screenshot({path:"test-results/research-flow-desktop.png",fullPage:true});await page.setViewportSize({width:390,height:844});
+  await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth+1);
+  await page.screenshot({path:"test-results/research-flow-mobile.png",fullPage:true});assert.deepEqual(errors,[]);
+ }catch(e){console.error("Research flow notice:",await page.locator("#notice").textContent());await page.screenshot({path:"test-results/research-flow-failure.png",fullPage:true});throw e;}finally{await ctx.close();}
 });

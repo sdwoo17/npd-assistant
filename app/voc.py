@@ -43,7 +43,17 @@ def inferred_filters(question, chosen=None):
     return result
 
 
-class Voc:
+from .review_sources import ReviewSources
+
+
+class Voc(ReviewSources):
+    def require_actual_voc_messages(self,user,messages):
+        from .research_provenance import synthetic_record
+        real={r['id'] for r in self.voc_records(user['project_id']) if r['evidence_type']=='real'}
+        synthetic={r['id'] for r in self.knowledge(user['project_id']) if synthetic_record(r)}
+        if not messages or any(synthetic_record(m) or set(m.get('evidence_ids',[]))&synthetic or not set(m.get('evidence_ids',[]))&real for m in messages):
+            raise AppError('실제 리뷰·상담 로그에 근거한 분석만 VoC 결과로 저장할 수 있습니다. 가상 페르소나 발언은 FGI 가설로 보관하세요.',409)
+
     def features(self, project):
         result = {k: dict(v) for k, v in FEATURES.items()}
         for r in self.store.list(project, "feature"):
@@ -174,7 +184,11 @@ class Voc:
         epoch = self.store.epoch(p)
         ids = strings(body.get("voc_ids", []), 1000, 80)
         rows = [self.store.get(p, "voc", rid) for rid in ids] if ids else self.voc_records(p, body.get("filters"))
-        rows = [r for r in rows if r.get("classification_source") != "po_reviewed" and not r.get("withdrawn")]
+        rows = [r for r in rows if not r.get("withdrawn")]
+        if body.get('synthetic_mode') is not True:
+            rows=[r for r in rows if r.get('evidence_type')=='real']
+            if not rows:raise AppError('분석할 실제 리뷰·상담 로그를 먼저 수집 또는 업로드하세요. VoC 분석은 선택 작업입니다.',409)
+        rows=[r for r in rows if r.get('classification_source')!='po_reviewed']
         taxonomy = self.features(p)
         updates = []
         for start in range(0, len(rows), 25):
@@ -213,6 +227,8 @@ class Voc:
             return json.loads(data)
 
     def collect_reviews(self, user, body, job_id=None):
+        if body.get('provider')=='android_publisher':return self.collect_android_reviews(user,body)
+        if body.get('provider')=='s3_import':return self.import_s3_reviews(user,body)
         owner(user)
         p = user["project_id"]
         app_id = text(body, "app_id", 30)

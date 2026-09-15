@@ -59,7 +59,7 @@ class Stage1ResearchTests(unittest.TestCase):
         with self.assertRaises(AppError):self.review(missing_scope)
         for task,(_,kind,_) in TASKS.items():
             if kind=='brief':continue
-            row=item(self.s,self.u,kind,brief['id'],review=False,fields={k:None if s['type']=='number' else [] if s['type']=='lines' else False if s['type']=='checkbox' else '' for k,s in TYPES[kind].items()})
+            row=item(self.s,self.u,kind,brief['id'],review=False,fields={k:None if s['type']=='number' else [] if s['type'] in ('lines','rows') else False if s['type']=='checkbox' else '' for k,s in TYPES[kind].items()})
             with self.assertRaises(AppError,msg=task):self.review(row)
         row=item(self.s,self.u,'constraint',brief['id'],review=False,applicability='not_applicable')
         with self.assertRaises(AppError):self.review(row)
@@ -224,7 +224,7 @@ class Stage1ResearchTests(unittest.TestCase):
 
     def test_shared_ancestry_is_checked_once_per_access_traversal(self):
         brief=self.brief();rows=graph(self.s,self.u,brief);selected=pack(self.s,self.u,brief,rows)
-        with patch.object(self.s,'knowledge',wraps=self.s.knowledge) as lookup:
+        with patch.object(self.s,'base_knowledge',wraps=self.s.base_knowledge) as lookup:
             self.assertTrue(self.s.accessible(self.u['project_id'],selected))
         self.assertEqual(lookup.call_count,1)
 
