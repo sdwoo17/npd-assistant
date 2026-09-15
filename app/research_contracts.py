@@ -224,8 +224,9 @@ def clean_values(schema,data):
             if not isinstance(value,list) or len(value)>spec['max_rows']:raise AppError(spec['label']+'은 100행 이내로 작성하세요.')
             result[key]=[clean_values(spec['columns'],v) for v in value]
         elif spec['type']=='number':
-            if value is not None and (type(value) not in (int,float) or not math.isfinite(value)):
-                raise AppError(spec['label']+'은 유한한 숫자 또는 미측정이어야 합니다.')
+            try:valid=value is None or type(value) in (int,float) and math.isfinite(value)
+            except OverflowError:valid=False
+            if not valid:raise AppError(spec['label']+'은 유한한 숫자 또는 미측정이어야 합니다.')
             result[key]=value
         elif spec['type']=='checkbox':
             if value is not None and type(value) is not bool:raise AppError(spec['label']+'을 확인하세요.')

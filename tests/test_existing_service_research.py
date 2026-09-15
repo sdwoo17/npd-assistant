@@ -141,7 +141,7 @@ class ExistingServiceTests(unittest.TestCase):
         overflow=self.calculation([(1e308,1e-308)])
         json.dumps(overflow,allow_nan=False)
         self.assertEqual(overflow['computed']['status'],'NOT_COMPUTABLE')
-        for bad in [float('inf'),float('nan')]:
+        for bad in [float('inf'),float('nan'),10**400]:
             with self.assertRaises(AppError):clean_fields('funnel',{'stages':[{'count':bad}]})
         with self.assertRaises(AppError):self.calculation([(-1,2)])
 
