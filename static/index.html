@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/styles.css" />
     <script src="/app.js" defer></script>
     <script src="/planning.js" defer></script>
+    <script src="/research-workspace.js" defer></script>
   </head>
   <body>
     <section id="login-screen">
@@ -73,6 +74,7 @@
           <button data-stage="prototype">3 프로토타입개발</button><button data-stage="uat">4 UAT/피드백</button>
         </nav>
         <nav aria-label="리서치 작업" id="research-subnav"><button data-page="baseline">기존서비스분석</button>
+          <button data-page="research-workspace">연구 작업·PRD 준비</button>
           <button data-page="chat" class="active">선진사례분석</button
           ><button data-page="research" id="research-nav">
             ▤ &nbsp; 지식 관리</button
@@ -115,6 +117,7 @@
             <small>소량의 테스트 요청을 전송합니다. 고객 자료는 포함하지 않습니다.</small>
           </div>
           <section id="page-baseline" hidden><div id="baseline-workspace"></div></section>
+          <section id="page-research-workspace" hidden><div id="research-workspace"></div></section>
           <section id="page-definition" hidden><nav id="definition-tabs" aria-label="PRD 작성 단계"></nav><div id="definition-workspace"></div></section>
           <section id="page-prototype" hidden><div class="panel"><h2>프로토타입개발 전달</h2><p>확정한 PRD와 사용자 스토리를 PRD작성 단계에서 내보내 개발 도구에 전달하세요. 이 저장소에는 프로토타입 자동 생성·배포 기능이 아직 구현되어 있지 않습니다.</p></div></section>
           <section id="page-uat" hidden><div class="panel"><h2>UAT/피드백</h2><p>확정 스토리의 Given/When/Then 수용 기준을 UAT 시나리오로 활용할 수 있습니다. 이 저장소에는 실행 결과를 수집하는 UAT 관리 기능이 아직 구현되어 있지 않습니다.</p></div></section>

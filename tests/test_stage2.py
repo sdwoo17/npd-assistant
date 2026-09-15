@@ -118,6 +118,8 @@ class Stage2Tests(unittest.TestCase):
         asset=self.asset('existing_service')
         result=self.post('/api/service-analysis',{'asset_refs':[{'id':asset['id'],'version':asset['version']}],'prompt':'전체 서비스 분석'})
         reviewed=self.post('/api/research-results/review',{'result_id':result['id'],'expected_version':result['version'],'text':result['text']})
+        from tests.research_factory import scope_with_source
+        scope_with_source(self.s,self.u,reviewed)
         draft=self.post('/api/story-drafts',{'prompt':'고객 가치'})
         self.assertTrue(any(d['id']==reviewed['id'] for d in draft['dependencies']))
         self.post('/api/planning-assets/withdraw',{'asset_id':asset['id'],'expected_version':asset['version']})

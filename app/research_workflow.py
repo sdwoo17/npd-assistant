@@ -87,9 +87,17 @@ class ResearchWorkflow:
         actual=body.get('actual_customer_data',row.get('actual_customer_data',False))
         if type(actual) is not bool or (actual and row['category']!='fgi_actual'):
             raise AppError('실제 고객 조사 여부를 확인하세요.')
+        changes={'text':content,'state':'reviewed','actual_customer_data':actual,
+            'reviewed_by':user['id'],'review_reason':optional(body,'reason',3000),
+            'canonical_version':'research-result.v2'}
+        if row['category']=='existing_service':
+            # The editable text is canonical. Never send superseded generated
+            # sections alongside the PO's replacement text to another model.
+            changes['sections']=[{'title':'PO 검토본','text':content,
+                'asset_ids':[r['id'] for r in row.get('source_refs',[])]}]
+            changes['questions']=strings(body.get('questions',row.get('questions',[])),40,3000)
         self.planning_actor(user)
-        return self.store.write(p,updates=[('research_result',row['id'],{'text':content,'state':'reviewed','actual_customer_data':actual,
-            'reviewed_by':user['id']},revision(body))],expected_epoch=epoch)[0]
+        return self.store.write(p,updates=[('research_result',row['id'],changes,revision(body))],expected_epoch=epoch)[0]
 
     def public_research(self, user, body):
         query=text(body,'query',600)

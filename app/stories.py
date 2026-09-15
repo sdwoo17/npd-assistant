@@ -39,6 +39,8 @@ class Stories(StoryRecovery):
     def story_inputs(self, user, data):
         p=user['project_id']
         knowledge={e['id']:e for e in self.knowledge(p)}
+        knowledge.update({r['id']:r for r in self.store.list(p,'research_item')
+            if r.get('state')=='reviewed' and self.accessible(p,r)})
         ids=strings(data.get('evidence_ids',[]),100,80)
         if any(rid not in knowledge for rid in ids):
             raise AppError('현재 프로젝트에서 사용할 수 있는 근거를 선택하세요.',409)
@@ -54,7 +56,7 @@ class Stories(StoryRecovery):
             people.append(self.get_persona(p,text(ref,'id',80),ref['version']))
         documents=[]
         for ref in objects(data.get('document_refs',[]),40,'기획 연결'):
-            if ref.get('kind') not in ('definition','research_result','debrief') or type(ref.get('version')) is not int:
+            if ref.get('kind') not in ('definition','research_result','debrief','research_item') or type(ref.get('version')) is not int:
                 raise AppError('연결 문서의 종류·버전을 확인하세요.')
             row=self.store.get(p,ref['kind'],text(ref,'id',80))
             if row['version']!=ref['version'] or not self.accessible(p,row):
@@ -168,6 +170,11 @@ class Stories(StoryRecovery):
             d['kind']=='user_story' and d['id']==base['id'] for d in r.get('dependencies',[])))][-3:]
         previous=[{'id':r['id'],'stories':r['stories']} for r in prior]
         context=self.definition_context(user)
+        if context.get('research_packs'):
+            pack=context['research_packs'][0]
+            prior=[r for r in prior if r.get('research_id')==pack['research_id']]
+            previous=[{'id':r['id'],'stories':r['stories']} for r in prior]
+            evidence+=context['research_items'];records+=context['research_items']
         if base:
             # A revision cannot depend on itself, including through downstream documents.
             context={k:[r for r in rows if r['id']!=base['id'] and not any(
@@ -210,6 +217,7 @@ class Stories(StoryRecovery):
         self.planning_actor(user)
         checks=[('user_story',base['id'],base['version'])] if base else []
         return self.store.write(p,inserts=[('story_draft',{'prompt':prompt,'prompt_version':'story-drafts-v1','model':self.model.model,
+            'research_id':context['research_packs'][0]['research_id'] if context.get('research_packs') else None,
             'stories':candidates,'extraction_ids':run_ids,'links':links,'dependencies':dependencies,
             'base_story':{'id':base['id'],'version':base['version']} if base else None,
             'assumptions':result['assumptions'],'created_by':user['id']},None)],expected_epoch=epoch,checks=checks)[0]

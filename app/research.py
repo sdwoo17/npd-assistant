@@ -4,6 +4,8 @@ import json
 from .contracts import text, optional, strings, revision, public_url, date_value
 from .ingest import decode_file, chunks
 from .store import AppError
+from .source_locations import document_locations, clean_locator
+from .research_contracts import EVIDENCE_TYPES
 
 
 def owner(user):
@@ -27,7 +29,8 @@ class Research:
         if route.startswith("/api/research/raw/"):
             r = self.store.get(p, "source", route.rsplit("/", 1)[-1])
             self.audit(user, "source_read", r["id"])
-            return {"filename": r["filename"], "text": self.store.decrypt(r["encrypted_text"]), "version": r.get("content_version", 1)}
+            return {"filename": r["filename"], "text": self.store.decrypt(r["encrypted_text"]), "version": r.get("content_version", 1),
+                'source_locations':r.get('source_locations',{'status':'NEEDS_REEXTRACTION'})}
         if route.startswith("/api/research/versions/"):
             return [{k: v for k, v in r.items() if not k.startswith("encrypted_")} for r in self.store.history(p, "source", route.rsplit("/", 1)[-1])]
         if route.startswith("/api/insights/versions/"):
@@ -58,6 +61,7 @@ class Research:
                 raise AppError("리서치 자료 정책을 확인하세요.")
             fields = {"filename": filename, "title": text(body, "title", 200), "encrypted_text": self.store.encrypt(content),
                 "encrypted_file": self.store.encrypt(body["content_base64"]), "hash": digest, "owner_id": user["id"], "status": "extracted", "policy": policy}
+            fields['source_locations']=document_locations(body,content)
             if body.get("source_id"):
                 old = self.store.get(p, "source", body["source_id"])
                 fields["content_version"] = old.get("content_version", 1) + 1
@@ -85,15 +89,27 @@ class Research:
             "feature_ids": [feature], "service_id": taxonomy[feature]["service_id"],
             "applicability": optional(body, "applicability", 3000), "limitations": optional(body, "limitations", 3000),
             "competitor": optional(body, "competitor", 500), "observed_at": observed,
+            'source_locator':clean_locator(body.get('source_locator')),
+            'source_family_id':optional(body,'source_family_id',200),
+            'evidence_category':body.get('evidence_category','ATTACHMENT_STATEMENT'),
+            'claim_status':'UNVERIFIED',
             "public_url": public_url(optional(body, "public_url", 1500)), "allowed_projects": [project], "published": False}
 
     def insight_save(self, user, body):
         owner(user)
         p = user["project_id"]
-        fields = self.insight_fields(p, body)
-        source = self.store.get(p, "source", body.get("source_id"))
+        old=self.store.get(p,'insight',body['insight_id']) if body.get('insight_id') else {}
+        fields = self.insight_fields(p, {**old,**body})
+        if fields['evidence_category'] not in EVIDENCE_TYPES:raise AppError('근거 유형을 확인하세요.')
+        source = self.store.get(p, "source", body.get("source_id",old.get("source_id")))
         fields.update(source_id=source["id"], source_version=source.get("content_version", 1),
-                      evidence_type=body.get("evidence_type", "research"))
+                      evidence_type=body.get("evidence_type", old.get("evidence_type", "research")))
+        if fields['evidence_type'] in EVIDENCE_TYPES:
+            fields['evidence_category']=fields['evidence_type']
+            fields['evidence_type']='synthetic' if fields['evidence_category']=='SYNTHETIC_FGI' else 'research'
+        valid_positions={(r['locator'],r['start'],r['end']) for r in source.get('source_locations',{}).get('parts',[])}
+        if any((r['locator'],r['start'],r['end']) not in valid_positions for r in fields['source_locator']['parts']):
+            raise AppError('현재 원문의 위치를 선택하세요.')
         if fields["evidence_type"] not in ("research", "synthetic"):
             raise AppError("리서치 또는 합성 자료를 선택하세요.")
         if body.get("insight_id"):
@@ -141,8 +157,11 @@ class Research:
         try:
             epoch = self.store.epoch(p)
             segments = chunks(self.store.decrypt(source["encrypted_text"]))
-            drafts, seen = [], set()
+            drafts, seen, cursor = [], set(), 0
+            full_text=self.store.decrypt(source['encrypted_text'])
             for index, chunk in enumerate(segments):
+                start=full_text.find(chunk,cursor);end=start+len(chunk);cursor=end
+                locations=[r for r in source.get('source_locations',{}).get('parts',[]) if r['start']<end and r['end']>start]
                 self.store.assert_epoch(p, epoch)
                 result = self.generate("insights", {"document": chunk, "chunk": index + 1, "chunks": len(segments),
                     "taxonomy": self.features(p), "purpose": "소유자 검토용 비공개 초안"})
@@ -154,6 +173,8 @@ class Research:
                     if key not in seen:
                         seen.add(key)
                         drafts.append(("insight", {**fields, "source_id": source["id"], "source_version": source.get("content_version", 1),
+                            'source_locator':clean_locator({'parts':locations}),
+                            'evidence_category':'SYNTHETIC_FGI' if body.get('evidence_type')=='synthetic' else 'ATTACHMENT_STATEMENT',
                             "evidence_type": body.get("evidence_type", "research"), "chunk": index + 1, "job_id": job["id"]}, None))
                 self.store.update(p, "job", job["id"], {"progress": index + 1, "total": len(segments)})
             result = self.store.write(p, inserts=drafts, expected_epoch=epoch)

@@ -117,6 +117,7 @@ function lines(value) {
     .filter(Boolean);
 }
 function resetWorkspace() {
+  window.researchWorkspaceReset?.();
   window.planningReset?.();
   state.studyId = null;
   state.conversation = null;
@@ -226,6 +227,7 @@ async function page(name) {
     .querySelectorAll("nav button[data-page]")
     .forEach((b) => b.classList.toggle("active", b.dataset.page === name));
   const labels = {
+    'research-workspace':['연구 작업·PRD 준비','범위·근거·조사 결과를 구조화하고 PRD 작성 준비 상태를 확인하세요.'],
     baseline: ["기존서비스분석", "PRD·매뉴얼을 함께 분석하고 검토한 결과를 후속 기획에 연결하세요."],
     definition: ["PRD작성", "의도를 직접 작성하거나 AI 후보를 비교하고, 설계안과 고객 검증 상태를 별도로 관리하세요."],
     prototype: ["프로토타입개발", "확정 PRD와 스토리를 개발 작업으로 전달하세요."],
@@ -255,6 +257,7 @@ async function page(name) {
   $("page-title").textContent = labels[name][0];
   $("page-caption").textContent = labels[name][1];
   await window.planningPage?.(name);
+  if(name==='research-workspace')await window.researchWorkspacePage?.();
   if (name === "research") await renderResearch();
   if (name === "voc") await loadVoc();
   if (name === "prd") await renderPlanning();

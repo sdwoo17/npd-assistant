@@ -264,17 +264,20 @@
     const list=node("div",null,"planning-list");rows.forEach(d=>list.append(planningButton(d.title+" · v"+d.version+" · "+d.state,()=>{p.document=d;renderStage();})));root.append(list);
     const row=p.document?.stage===p.stage?p.document:{},form=node("form",null,"panel");root.append(form);
     const title=pf(form,"document-title","문서 제목",row.title||stages[p.stage],"text");title.required=true;
-    const sections=repeat(form,"문단",row.sections||[{id:"overview",title:stages[p.stage],text:"",evidence_ids:[]}],[["id","문단 식별자","text"],["title","문단 제목","text"],["text","본문","textarea"]]);
+    const prdAreas={decision:"결정 요약",evidence:"근거와 문제",users:"사용자와 과업",metrics:"목표와 지표",scope:"대안과 범위",stories:"사용자 스토리",requirements:"요구사항과 인수 기준",data:"화면과 데이터",constraints:"비기능 요구사항",validation:"검증과 출시",economics:"경제성과 의존성",questions:"질문과 결정"};
+    const initial=row.sections||(p.stage==="prd"?Object.entries(prdAreas).map(([id,title])=>({id,title,text:"",evidence_ids:[],coverage_status:"needs_work"})):[{id:"overview",title:stages[p.stage],text:"",evidence_ids:[]}]);
+    const sections=repeat(form,"문단",initial,[["id","문단 식별자","text"],["title","문단 제목","text"],["text","본문","textarea"],["coverage_status","작성 상태","select",[["written","작성됨"],["needs_work","보완 필요"],["not_applicable","해당 없음"]]],["na_reason","해당 없음의 이유","textarea"]]);
     const assumptions=pf(form,"document-assumptions","가정 · 한 줄에 하나",(row.assumptions||[]).join("\n"));
-    const questions=repeat(form,"문서 확인 질문",row.questions||[],[["text","질문","textarea"],["status","상태","select",[["unanswered","미해소"],["answered","답변 완료"],["excluded","범위 제외"]]],["answer","답변·제외 사유","textarea"]]);
+    const questions=repeat(form,"문서 확인 질문",row.questions||[],[["text","질문","textarea"],["status","상태","select",[["unanswered","미해소"],["answered","답변 완료"],["excluded","범위 제외"]]],["answer","답변·제외 사유","textarea"],["owner","후속 조사 책임자","text"],["next_action","조사 방법·필요 시점","textarea"]]);
     const stories=p.stories.filter(s=>!s.redacted&&s.definition_status==="confirmed"),storySelect=pick(form,"document-stories","연결할 확정 스토리",stories.map(s=>[s.id,s.title+" · v"+s.version]),(row.story_refs||[]).map(s=>s.id),true);
     const save=node("button","문서 초안 저장","primary");save.type="submit";form.append(save);
     form.onsubmit=planningGuard(async()=>{p.document=await api(row.id?"/api/definitions/update":"/api/definitions",{stage:p.stage,title:title.value,sections:sections().map(s=>({...s,evidence_ids:s.evidence_ids||[]})),assumptions:lines(assumptions),questions:questions(),story_refs:stories.filter(s=>values(storySelect).includes(s.id)).map(s=>({id:s.id,version:s.version})),...(row.id?{document_id:row.id,expected_version:row.version}:{})});await load();renderStage();notice("문서 초안을 저장했습니다.");});
     if(row.id){const controls=node("div",null,"panel");root.append(controls,node("p",row.id+" · v"+row.version+" · "+row.state));
+      if(p.stage==="prd")controls.append(planningButton("저장된 PRD 준비 상태 검사",async()=>{const check=await api("/api/definitions/readiness",{document_id:row.id,expected_version:row.version});const result=node("div");result.append(node("h3",check.ready?"연구 검토 준비 조건 충족":"보완 필요"),node("p",check.scope));for(const message of check.errors)result.append(node("p",message,"error"));controls.append(result);}));
       controls.append(planningButton("이 버전을 기준 문서로 확정",async()=>{p.document=await api("/api/definitions/confirm",{document_id:row.id,expected_version:row.version});await load();renderStage();notice("검토한 문서를 후속 기획의 기준으로 선택했습니다.");}));
       if(row.state==="confirmed")exportButtons(controls,"/api/definitions/export",{document_id:row.id,expected_version:row.version},row.id+"-v"+row.version);
     }
-    const inputs=node("details",null,"panel");inputs.append(node("summary","후속 기획에 사용되는 검토 리서치"));p.results.filter(r=>!r.redacted&&r.state==="reviewed").forEach(r=>inputs.append(node("p",r.title+" · "+r.category+" · v"+r.version)));root.append(inputs);
+    const inputs=node("details",null,"panel");inputs.append(node("summary","연구 입력 범위"),node("p",row.research_pack_ref?"연결된 연구 묶음: "+row.research_pack_ref.id+" · v"+row.research_pack_ref.version:"연구 작업·PRD 준비에서 사용할 산출물의 버전을 선택하세요."),planningButton("연구 묶음 선택·보완",()=>page("research-workspace")));root.append(inputs);
   }
   function renderStage(){
     const root=$("definition-workspace"),tabs=$("definition-tabs");root.replaceChildren();tabs.replaceChildren();
@@ -285,8 +288,10 @@
     for(const row of p.results.filter(r=>!r.redacted&&r.category===category)){
       const card=node("details",null,"planning-entry");card.append(node("summary",row.title+" · v"+row.version+" · "+row.state));
       const text=pf(card,"research-review-text","분석 내용·조건·한계",row.text);
+      const questions=row.category==="existing_service"?pf(card,"research-review-questions","확인 질문 · 한 줄에 하나",(row.questions||[]).join("\n")):null;
+      const reason=pf(card,"research-review-reason","검토·변경 이유",row.review_reason||"");
       const actual=row.category==="fgi_actual"?pf(card,"actual-report","실제 고객 조사 보고서임을 확인했습니다 · 가상 FGI 제외",row.actual_customer_data,"checkbox"):null;
-      card.append(planningButton("검토본 저장 · PRD 작성에 연결",async()=>{await api("/api/research-results/review",{result_id:row.id,expected_version:row.version,text:text.value,...(actual?{actual_customer_data:actual.checked}:{})});await load();await window.planningPage(category==="existing_service"?"baseline":category==="fgi_actual"?"studies":category==="voc"?"voc":"chat");notice("검토한 리서치 결과를 후속 기획에서 사용할 수 있습니다.");}),
+      card.append(planningButton("검토본 저장 · PRD 작성에 연결",async()=>{await api("/api/research-results/review",{result_id:row.id,expected_version:row.version,text:text.value,reason:reason.value,...(questions?{questions:lines(questions)}:{}),...(actual?{actual_customer_data:actual.checked}:{})});await load();await window.planningPage(category==="existing_service"?"baseline":category==="fgi_actual"?"studies":category==="voc"?"voc":"chat");notice("검토 결과를 저장했습니다. 연구 묶음에서 사용할 버전을 선택하세요.");}),
         planningButton("분석 Markdown 내보내기",()=>download(row.id+".md",row.text)));root.append(card);
     }
   }

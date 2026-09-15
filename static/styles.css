@@ -1083,3 +1083,12 @@ form [type="submit"] {
 .source-comparison canvas, .planning-entry canvas, .planning-source > .planning-entry canvas { width: 100%; height: auto; }
 .analysis-order-entry { padding: 8px 0; border-top: 1px solid var(--line); }
 @media(max-width:800px) { .source-comparison { grid-template-columns: 1fr; } }
+/* Research editors share the planning controls and remain usable on mobile. */
+#research-workspace { min-width: 0; overflow-wrap: anywhere; }
+#research-workspace input:not([type="checkbox"]), #research-workspace select,
+#research-workspace textarea { display: block; width: 100%; max-width: 100%; box-sizing: border-box; margin: .35rem 0 1rem; }
+#research-workspace select[multiple] { min-height: 9rem; }
+#research-workspace textarea { min-height: 5rem; }
+#research-workspace label { display: block; margin-top: .75rem; }
+#research-workspace button { margin: .3rem; white-space: normal; }
+#research-workspace .planning-list { max-height: 18rem; overflow: auto; }

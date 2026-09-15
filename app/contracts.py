@@ -109,7 +109,7 @@ def citation_ids(content):
     Ordinary bracketed prose is not a citation. Recognized IDs must be resolved
     by the caller; matching the grammar never grants access to a source.
     """
-    prefixes = r"(?:INS|VOC|PROB|OPP|PDEF|REQ|NFR|SCOPE|HYP|MET|BEN|AST|TASK|UTASK|IMP|PER|FGI|DEB|STORY|DOC|RSC)"
+    prefixes = r"(?:INS|VOC|PROB|OPP|PDEF|REQ|NFR|SCOPE|HYP|MET|BEN|AST|TASK|UTASK|IMP|PER|FGI|DEB|STORY|DOC|RSC|RITEM|RPACK)"
     return [value for value in re.findall(r"\[([^\]\n]+)\]", content)
             if re.fullmatch(r"[0-9a-f-]{36}", value, re.IGNORECASE)
             or re.fullmatch(prefixes + r"-[\w.-]+", value, re.IGNORECASE)]
@@ -147,6 +147,23 @@ def validate_claims(content, evidence, statistics=None):
         raise AppError("근거·서버 집계에 없는 수치가 포함됐습니다. 수치를 확인해 다시 요청하세요.", 502)
     if not quantities(content).issubset(allowed_quantities):
         raise AppError("수치의 단위가 근거·서버 집계와 일치하지 않습니다.", 502)
+    # A level is not an uplift, and percentage points are not percentages.
+    # This conservative lexical check complements structured numeric cards;
+    # it is not a replacement for checking the claim's scope and meaning.
+    def percent_roles(value):
+        result={}
+        for sentence in re.split(r'[\n。!?]|(?<!\d)\.(?!\d)',value):
+            for match in re.finditer(r'(\d[\d,]*(?:\.\d+)?)\s*(%p|퍼센트포인트|percentage points|%|퍼센트|percent\b)',sentence,re.I):
+                number=match[1].replace(',','');unit=match[2].lower()
+                if unit in ('%p','퍼센트포인트','percentage points'):role='point'
+                elif re.search(r'증가|증감|개선|상승|감소|향상|increase|uplift|improv|decrease',sentence,re.I):role='change'
+                else:role='level'
+                result.setdefault(number,set()).add(role)
+        return result
+    source_roles=percent_roles(source_text)
+    for number,roles in percent_roles(content).items():
+        if number in source_roles and not roles.issubset(source_roles[number]):
+            raise AppError('수치의 수준·증가율·퍼센트포인트 의미가 근거와 다릅니다.',502)
     # This is not semantic truth verification; human review remains mandatory.
     validate_citations(content, by_id)
     if any(p in content for p in ("실제 광고주 전원", "모든 고객이 동의", "실제 고객 100%", "실제 인터뷰 결과")) and not any(content in e["text"] and e["evidence_type"] == "real" for e in evidence):

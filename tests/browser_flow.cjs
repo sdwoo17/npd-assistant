@@ -532,3 +532,66 @@ test("browser: original replacement opens explicit recovery preserving PO edits 
     await page.screenshot({path:"test-results/stage2-source-recovery.png",fullPage:true});assert.deepEqual(errors,[]);
   } catch(error){console.error("Planning failure notice:",await page.locator("#notice").textContent());await page.screenshot({path:"test-results/planning-failure-"+Date.now()+".png",fullPage:true});throw error;} finally {await ctx.close();}
 });
+
+test("browser: scoped research forms preserve PO edits, select a pack and show readiness gaps on mobile",async()=>{
+  const {ctx,page,errors}=await login("po");
+  try{
+    await page.locator(".sidebar details summary").filter({hasText:"프로젝트 추가"}).click();
+    await page.fill("#project-title","Synthetic Stage 1 UI");
+    await page.locator("#project-create button").click();
+    await page.waitForFunction(()=>document.querySelector("#project-name").textContent.includes("Synthetic Stage 1 UI"));
+    await nav(page,"research-workspace");
+    await page.getByRole("button",{name:"새 조사 브리프",exact:true}).click();
+    await page.getByLabel("산출물 제목",{exact:true}).fill("Synthetic research brief");
+    for(const label of ["제품·시장·대상 범위","지금 결정할 질문","제외 범위와 이유","결정 책임자","필요 시점·단계"]){
+      await page.getByLabel(label+" · 검토 시 필수",{exact:true}).fill("Synthetic UI fixture; not actual research");
+    }
+    await page.getByLabel("수행할 조사 작업",{exact:true}).selectOption(["RS-00"]);
+    await page.getByLabel("변경·검토 이유",{exact:true}).fill("Synthetic contract review");
+    let response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/items")&&r.request().method()==="POST");
+    await page.getByRole("button",{name:"초안 저장",exact:true}).click();
+    assert.equal((await response).status(),201);
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/items/review"));
+    await page.getByRole("button",{name:"내용 저장 후 검토 완료",exact:true}).click();
+    assert.equal((await response).status(),201);
+    await page.getByLabel("작성할 산출물",{exact:true}).selectOption("hypothesis");
+    await page.getByRole("button",{name:"새 산출물",exact:true}).click();
+    await page.getByLabel("산출물 제목",{exact:true}).fill("Synthetic hypothesis draft");
+    await page.getByLabel("적용 여부",{exact:true}).selectOption("not_applicable");
+    await page.getByLabel("해당 없음의 이유",{exact:true}).fill("This UI fixture does not assert customer research.");
+    await page.getByLabel("변경·검토 이유",{exact:true}).fill("Synthetic test of review consistency");
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/items")&&r.request().method()==="POST");
+    await page.getByRole("button",{name:"초안 저장",exact:true}).click();
+    assert.equal((await response).status(),201);
+    await page.getByLabel("해당 없음의 이유",{exact:true}).fill("");
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/items/review"));
+    await page.getByRole("button",{name:"내용 저장 후 검토 완료",exact:true}).click();
+    assert.equal((await response).status(),409);
+    await page.locator("#notice").filter({hasText:"해당 없음의 이유가 필요합니다."}).waitFor();
+    await page.getByLabel("해당 없음의 이유",{exact:true}).fill("This UI fixture does not assert customer research.");
+    await page.getByLabel("산출물 제목",{exact:true}).fill("PO edit immediately before review");
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/items/review"));
+    await page.getByRole("button",{name:"내용 저장 후 검토 완료",exact:true}).click();
+    const reviewed=await response;assert.equal(reviewed.status(),201);
+    assert.equal((await reviewed.json()).title,"PO edit immediately before review");
+    await page.getByRole("button",{name:"편집 닫기",exact:true}).click();
+    await page.getByLabel("묶음 제목",{exact:true}).fill("Synthetic research pack");
+    await page.getByRole("button",{name:"검토 산출물 모두 선택",exact:true}).click();
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/packs"));
+    await page.getByRole("button",{name:"선택한 버전으로 묶음 저장",exact:true}).click();
+    assert.equal((await response).status(),201);
+    await page.locator("#research-workspace details summary").filter({hasText:"Synthetic research pack"}).click();
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/select"));
+    await page.getByRole("button",{name:"PRD 작성에 이 버전 사용",exact:true}).click();assert.equal((await response).status(),201);
+    await page.locator("#research-workspace details summary").filter({hasText:"Synthetic research pack"}).click();
+    response=page.waitForResponse(r=>r.url().endsWith("/api/research-workspace/gate"));
+    await page.getByRole("button",{name:"연구 준비 검사",exact:true}).click();
+    const checked=await response;assert.equal(checked.status(),201);assert.equal((await checked.json()).ready,false);
+    await page.getByText("보완이 필요합니다",{exact:true}).waitFor();
+    await page.screenshot({path:"test-results/stage1-research-desktop.png",fullPage:true});
+    await page.setViewportSize({width:390,height:844});
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+    await page.screenshot({path:"test-results/stage1-research-mobile.png",fullPage:true});
+    assert.deepEqual(errors,[]);
+  }catch(error){console.error("Stage 1 notice:",await page.locator("#notice").textContent());await page.screenshot({path:"test-results/stage1-failure.png",fullPage:true});throw error;}finally{await ctx.close();}
+});

@@ -19,6 +19,7 @@ before(async () => {
   });
   [html,script] = await Promise.all(["/","/app.js"].map(path => fetch(origin+path).then(r=>r.text())));
   script += "\n" + await fetch(origin+"/planning.js").then(r=>r.text());
+  script += "\n" + await fetch(origin+"/research-workspace.js").then(r=>r.text());
 });
 
 after(async () => {

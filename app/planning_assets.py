@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from .contracts import text, optional, revision, strings
 from .ingest import decode_file
+from .source_locations import document_locations
 from .story_contracts import IMAGE_LIMIT, IMAGE_PIXELS, IMAGE_EDGE, objects
 from .store import AppError
 from .planning_regions import PlanningRegions, image_view, validated_regions
@@ -91,11 +92,12 @@ class PlanningAssets(PlanningRegions):
         suffix = Path(filename).suffix.lower()
         if suffix in ('.png', '.jpg', '.jpeg'):
             raw, preview, image_info = decode_image(body)
-            content, media = '', 'image'
+            content, media, locations = '', 'image', {'read_scope':'image; explicit image extraction required','parts':[]}
         else:
             filename, content, _ = decode_file(body)
             raw = base64.b64decode(body['content_base64'], validate=True)
             preview, image_info, media = b'', {}, 'document'
+            locations=document_locations(body,content)
         digest = hashlib.sha256(raw).hexdigest()
         purpose = body.get('purpose', 'story_sketch')
         if purpose not in ('story_sketch', 'existing_service', 'actual_fgi', 'internal_voc'):
@@ -119,6 +121,7 @@ class PlanningAssets(PlanningRegions):
             'encrypted_file': encrypted, 'encrypted_text': self.store.encrypt(content),
             'encrypted_preview': self.store.encrypt(base64.b64encode(preview).decode()), 'image': image_info,
             'sharing': 'project_private', 'customer_validation': 'unverified', 'dependencies': []}
+        fields['source_locations']=locations
         try:
             self.planning_actor(user)
             if old:
