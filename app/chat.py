@@ -12,7 +12,7 @@ MAX_PARTICIPANTS = 8
 
 
 class Chat:
-    def create_conversation(self, user, body):
+    def create_conversation(self, user, body, persist=True):
         p = user["project_id"]
         ids = strings(body.get("persona_ids", []), MAX_PARTICIPANTS, 80)
         people = [self.get_persona(p, rid) for rid in ids]
@@ -35,6 +35,8 @@ class Chat:
             "participant_persona_versions": [{"id": r["id"], "version": r["version"]} for r in people],
             "prd_id": prd_id, "decisions": [], "objective": optional(body, "objective", 3000), "filters": filters(body.get("filters", {})), "round_type": "explore"}
         inserts.append(("conversation", conv, None))
+        if not persist:
+            return inserts
         return self.store.write(p, inserts=inserts)[-1]
 
     def conversation(self, user, cid):
@@ -56,6 +58,10 @@ class Chat:
     def conversation_state(self, user, body):
         p = user["project_id"]
         conv = self.store.get(p, "conversation", body.get("conversation_id"))
+        if conv.get("study_id"):
+            study = self.study(user, conv["study_id"])
+            if study["status"] == "completed" or any(k in body and body[k] != conv.get(k) for k in ("objective", "mode", "prd_id")):
+                raise AppError("스터디 시작 후 목적·모드·기준 PRD는 고정됩니다. 후속 스터디를 만드세요.", 409)
         updates = {}
         if "objective" in body:
             updates["objective"] = optional(body, "objective", 3000)
@@ -98,6 +104,9 @@ class Chat:
         p = user["project_id"]
         epoch = self.store.epoch(p)
         conv = self.conversation(user, text(body, "conversation_id", 80))
+        study = self.study_context(user, conv)
+        if study and study["status"] == "completed":
+            raise AppError("완료한 스터디에는 발언을 추가할 수 없습니다. 후속 스터디를 만드세요.", 409)
         question = redact(text(body, "message", 5000))
         request_id = optional(body, "request_id", 100) or str(uuid.uuid4())
         fingerprint = hashlib.sha256(json.dumps({"message": question, "action": body.get("action"), "filters": body.get("filters")}, sort_keys=True).encode()).hexdigest()
@@ -115,6 +124,8 @@ class Chat:
             raise AppError("지원하지 않는 채팅 동작입니다.")
         natural_create = bool(re.search(r"페르소나.*(?:만들|생성)", question)) and "@" not in question
         if action == "create_persona" or natural_create:
+            if study:
+                raise AppError("스터디 세션에서는 참여자 풀이 고정됩니다. 페르소나 화면에서 별도로 생성하세요.", 409)
             person = self.generate_persona(user, {"segment": question, "name": body.get("persona_name", ""), "filters": conv.get("filters")}, persist=False)
             # Persist the new persona and its complete chat turn in one transaction.
             deps = dependency_map([person])
@@ -122,14 +133,17 @@ class Chat:
                 "evidence_ids": person["evidence_ids"], "assumptions": person["assumptions"], "is_synthetic": True,
                 "persona_id": person["id"], "persona_version": person["version"], "dependencies": deps, "status": "persona_created"}
             return self.persist_turn(user, conv, question, [response], deps, request_id, fingerprint, epoch, {}, [("persona", person, person["id"])])
-        current = [r for r in self.store.list(p, "persona") if self.accessible(p, r)]
+        current = [r for r in self.store.list(p, "persona") if not r.get("archived") and self.accessible(p, r)]
         by_alias = {r["alias"]: r for r in current}
         pinned = []
         for ref in conv.get("participant_persona_versions", []):
             try:
                 r = self.get_persona(p, ref["id"], ref["version"])
                 pinned.append(r)
-                by_alias.setdefault(r["alias"], r)
+                if study:
+                    by_alias[r["alias"]] = r
+                else:
+                    by_alias.setdefault(r["alias"], r)
             except AppError:
                 pass
         aliases = re.findall(r"(?<![\w@])@([\w-]+)", question, re.UNICODE)
@@ -143,6 +157,8 @@ class Chat:
             targets = pinned
             if not targets or len(targets) != len(conv.get("participant_persona_versions", [])):
                 raise AppError("인터뷰 대상의 근거를 확인하고 @태그로 다시 지정하세요.", 409)
+        if study and (not targets or any({"id": r["id"], "version": r["version"]} not in study["participants"] for r in targets)):
+            raise AppError("FGI 스터디는 리크루팅한 참여자와 버전으로 진행합니다. 참여자 변경은 새 스터디에 기록하세요.", 409)
         if len(targets) > MAX_PARTICIPANTS:
             raise AppError(f"한 번에 최대 {MAX_PARTICIPANTS}명을 지정하세요.")
         chosen = body.get("filters", conv.get("filters", {}))
@@ -166,7 +182,11 @@ class Chat:
                 "evidence_ids": [], "assumptions": [], "dependencies": [], "status": "no_evidence", "model": None}
             return self.persist_turn(user, conv, question, [response], [], request_id, fingerprint, epoch, {"filters": scope})
         statistics = self.voc_analysis(p, scope)
-        deps = dependency_map(evidence + targets + history + statistics["records"] + conv.get("decisions", []))
+        if study:
+            provided = {e["id"] for e in evidence}
+            guide_ids = set(study["guide"]["evidence_ids"])
+            evidence += [e for e in self.knowledge(p) if e["id"] in guide_ids and e["id"] not in provided]
+        deps = dependency_map(evidence + targets + history + statistics["records"] + conv.get("decisions", []) + ([study] if study else []))
         stat_input = {k: v for k, v in statistics.items() if k != "records"}
         structured_history = [{k: m.get(k) for k in ("id", "speaker", "text", "evidence_ids", "assumptions", "observations", "is_synthetic", "persona_id", "persona_version")} for m in history]
         moderator = [{"id": m["id"], "text": m["text"]} for m in history if m["speaker"] == "PO"]
@@ -176,6 +196,7 @@ class Chat:
             payload = {"question": question, "history": structured_history, "moderator_messages": moderator,
                 "decisions": [d for d in conv.get("decisions", []) if d.get("active", True)], "objective": conv.get("objective", ""),
                 "round_type": conv.get("round_type", "explore"), "evidence": evidence, "statistics": stat_input,
+                "study": study,
                 "search": search_info, "persona_evidence_scope": "Profile evidence may predate the requested analytics filter; use statistics only for filtered counts."}
             if person:
                 payload["persona"] = person
@@ -187,7 +208,7 @@ class Chat:
             responses.append(response)
             structured_history.append({**response, "id": "current-round-" + str(len(responses))})
         updates = {"filters": scope}
-        if targets:
+        if targets and not study:
             updates.update(mode="interview", persona_ids=[r["id"] for r in targets],
                 participant_persona_versions=[{"id": r["id"], "version": r["version"]} for r in targets])
         return self.persist_turn(user, conv, question, responses, deps, request_id, fingerprint, epoch, updates)

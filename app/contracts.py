@@ -48,6 +48,8 @@ def date_value(value):
         from datetime import datetime
         date.fromisoformat(value[:10])
         if len(value) > 10:
+            if int(value[11:13]) > 23 or int(value[14:16]) > 59 or int(value[17:19]) > 59:
+                raise ValueError()
             datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         raise AppError("유효하지 않은 날짜입니다.")
@@ -101,6 +103,23 @@ def quantities(value):
         r"(?<!\d)(\d[\d,]*(?:\.\d+)?)\s*(%|퍼센트|percent\b|건|명|원|달러|usd\b|krw\b)", value, re.IGNORECASE)}
 
 
+def citation_ids(content):
+    """Recognize internal UUIDs and reserved external evidence/entity IDs.
+
+    Ordinary bracketed prose is not a citation. Recognized IDs must be resolved
+    by the caller; matching the grammar never grants access to a source.
+    """
+    prefixes = r"(?:INS|VOC|PROB|OPP|PDEF|REQ|NFR|SCOPE|HYP|MET|BEN|AST|TASK|UTASK|IMP|PER|FGI|DEB)"
+    return [value for value in re.findall(r"\[([^\]\n]+)\]", content)
+            if re.fullmatch(r"[0-9a-f-]{36}", value, re.IGNORECASE)
+            or re.fullmatch(prefixes + r"-[\w.-]+", value, re.IGNORECASE)]
+
+
+def validate_citations(content, allowed_ids):
+    if any(value not in allowed_ids for value in citation_ids(content)):
+        raise AppError("본문에 확인되지 않은 인용 ID가 있습니다.", 502)
+
+
 def validate_claims(content, evidence, statistics=None):
     """Apply the same claim guards to summaries and individual generated fields.
 
@@ -129,9 +148,7 @@ def validate_claims(content, evidence, statistics=None):
     if not quantities(content).issubset(allowed_quantities):
         raise AppError("수치의 단위가 근거·서버 집계와 일치하지 않습니다.", 502)
     # This is not semantic truth verification; human review remains mandatory.
-    for match in re.findall(r"\[([^\]\n]+)\]", content):
-        if re.fullmatch(r"[0-9a-f-]{36}", match) and match not in by_id:
-            raise AppError("본문에 확인되지 않은 인용 ID가 있습니다.", 502)
+    validate_citations(content, by_id)
     if any(p in content for p in ("실제 광고주 전원", "모든 고객이 동의", "실제 고객 100%", "실제 인터뷰 결과")) and not any(content in e["text"] and e["evidence_type"] == "real" for e in evidence):
         raise AppError("가상 추론을 실제 고객 검증으로 표현할 수 없습니다.", 502)
 

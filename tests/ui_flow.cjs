@@ -145,3 +145,62 @@ test("a stale PO screen cannot accept another editor's proposal until refreshed"
   assert.equal(applied.version,proposal.target_prd_version+1);
   assert.ok(applied.sections.some(s=>s.text.includes(changedText)));
 });
+
+test("PO completes the five-stage FGI and checks an external PRD without storing its text", async()=>{
+  const {w,$,request}=await screen("po");
+  await click(w.document.querySelector("[data-page='studies']"));
+  $("study-new-title").value="DOM 합성 연구";
+  await submit($("study-create"));
+  const field=key=>$("study-detail").querySelector(`[data-field="${key}"]`);
+  field("study_objective").value="소재 리포트 분석";
+  field("study_questions").value="판단 근거를 어떻게 확인하나요?";
+  await submit($("study-detail").querySelector("form"));
+  assert.match($("study-detail").querySelector('[aria-current="step"]').textContent,/리크루팅/);
+  field("study_criteria").value="소재 리포트 담당 광고주 · 합성 모집";
+  field("study_personas").options[0].selected=true;
+  await submit($("study-detail").querySelector("form"));
+  await click(byText($("study-detail"),"AI로 가이드 생성"));
+  assert.equal($("study-detail").querySelectorAll('[data-field^="guide_text_"]').length,8);
+  assert.equal(byText($("study-detail"),"검토한 가이드로 세션 시작"),undefined);
+  await submit(field("guide_text_0").closest("form"));
+  await click(byText($("study-detail"),"검토한 가이드로 세션 시작"));
+  await click(byText($("study-detail"),"세션 열기"));
+  $("message-input").value="소재 리포트의 근거는 무엇인가요?";
+  await submit($("chat-form"));
+  assert.equal($("messages").querySelectorAll(".persona").length,1,$("notice").textContent);
+  await click(w.document.querySelector("[data-page='studies']"));
+  await click(byText($("study-detail"),"디브리프 생성"));
+  field("study_review_summary").value="검토 결과는 실제 고객에게 추가 확인한다.";
+  await submit(field("study_review_summary").closest("form"));
+  await click(byText($("study-detail"),"현재 검토본으로 스터디 완료"));
+  assert.match($("study-detail").textContent,/완료 스터디/);
+  assert.equal(byText($("study-detail"),"세션 열기"),undefined);
+  const study=(await request("/api/studies")).studies.find(r=>r.title==="DOM 합성 연구");
+  const exported=await request("/api/export/"+study.conversation_id+"?format=markdown");
+  assert.match(exported.text,/디브리프 체크리스트/);
+  await click(byText($("study-detail"),"검토본으로 PRD 변경 제안 생성"));
+  const evidence=await request("/api/evidence");
+  $("citation-check-text").value=`PRIVATE-PASTED-PRD [${evidence[0].id}] [${evidence[0].id}] v999 [INS-ADS-UNKNOWN]`;
+  await submit($("citation-check-form"));
+  assert.match($("citation-check-result").textContent,/인용 3회.*서로 다른 근거 2개.*유효 근거 1개/);
+  assert.match($("citation-check-result").textContent,/버전 불일치/);
+  assert.match($("citation-check-result").textContent,/접근 불가/);
+  assert.doesNotMatch(JSON.stringify(await request("/api/prds")),/PRIVATE-PASTED-PRD/);
+  $("project-title").value="FGI 독립 프로젝트";
+  await submit($("project-create"));
+  for(const id of ["study-detail","study-list","citation-check-result","persona-archive-list"])
+    assert.equal($(id).textContent,"",id);
+  assert.equal($("citation-check-text").value,"");
+});
+
+test("unavailable persona profiles can be archived without exposing their old text", async()=>{
+  const {w,$,request}=await screen("owner");
+  const evidence=(await request("/api/evidence")).find(e=>e.kind==="insight");
+  const person=await request("/api/personas",{name:"접근불가프로필",segment:"합성",goals:"숨겨져야할목표",constraints:"합성",assumptions:["가정"],evidence_ids:[evidence.id]});
+  await request("/api/insights/release",{insight_id:evidence.id,published:false});
+  const before=(await request("/api/bootstrap")).persona_pool_count;
+  await click(w.document.querySelector("[data-page='personas']"));
+  assert.doesNotMatch($("persona-archive-list").textContent,/숨겨져야할목표|접근불가프로필/);
+  await click(byText($("persona-archive-list"),person.id));
+  assert.equal((await request("/api/bootstrap")).persona_pool_count,before-1);
+});

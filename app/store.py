@@ -169,6 +169,8 @@ class Store:
                 if not row or json.loads(row["body"]).get("version", 1) != expected:
                     raise AppError("기획 입력이 변경됐습니다. 최신 내용으로 다시 생성하세요.", 409)
             changed = False
+            pool_query = "SELECT COUNT(*) FROM records WHERE project_id=? AND kind='persona' AND COALESCE(json_extract(body,'$.archived'),0)=0"
+            before_pool = db.execute(pool_query, (project,)).fetchone()[0]
             for kind, body, rid in inserts:
                 obj = dict(body, id=rid or str(uuid.uuid4()), project_id=project, kind=kind, created_at=timestamp(), version=1)
                 try:
@@ -176,7 +178,7 @@ class Store:
                 except sqlite3.IntegrityError:
                     raise AppError("동일한 이름 또는 요청이 이미 저장됐습니다.", 409)
                 saved.append(obj)
-                changed |= kind in ("source", "insight", "voc", "feature", "persona")
+                changed |= kind in ("source", "insight", "voc", "feature", "persona", "study")
             for kind, rid, changes, expected in updates:
                 row = db.execute("SELECT body FROM records WHERE id=? AND project_id=? AND kind=?", (rid, project, kind)).fetchone()
                 if not row:
@@ -194,7 +196,10 @@ class Store:
                 except sqlite3.IntegrityError:
                     raise AppError("동일한 이름이 이미 사용 중입니다.", 409)
                 saved.append(obj)
-                changed |= kind in ("source", "insight", "voc", "feature", "persona")
+                changed |= kind in ("source", "insight", "voc", "feature", "persona", "study")
+            after_pool = db.execute(pool_query, (project,)).fetchone()[0]
+            if after_pool > 20 and after_pool > before_pool:
+                raise AppError("페르소나 풀은 최대 20명입니다. 사용하지 않는 프로필을 보관한 후 추가하세요.", 409)
             if changed:
                 db.execute("INSERT INTO project_state VALUES(?,?) ON CONFLICT(project_id) DO UPDATE SET epoch=excluded.epoch", (project, epoch + 1))
         return saved

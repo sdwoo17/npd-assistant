@@ -27,6 +27,11 @@ class RecordingModel:
                 "feature": "reporting", "applicability": "광고주 기획", "limitations": "합성 검증 자료", "competitor": "", "observed_at": "", "public_url": ""}]}
         if task == "search":
             return {"keywords": []}
+        if task == "fgi_guide":
+            evidence = payload["evidence"][0]
+            return {"sections": [{"title": title, "text": "소재 리포트의 판단 근거를 어떻게 확인하나요?",
+                    "evidence_ids": [evidence["id"]]} for title in payload["section_titles"]],
+                    "assumptions": ["합성 테스트 가이드이며 실제 고객 검증이 아님"]}
         if task == "classify":
             return {"classifications": [{"voc_id": r["id"], "feature_ids": ["creative_test"], "problem": "소재 해석의 어려움",
                 "need": "비교 조건 설명", "confidence": 0.8} for r in payload["voc"]]}

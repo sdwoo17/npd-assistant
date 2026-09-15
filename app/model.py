@@ -25,6 +25,7 @@ SCHEMAS = {
     "persona": obj({"name": STRING, "segment": STRING, "goals": STRING, "constraints": STRING,
         "assumptions": STRINGS, "evidence_ids": STRINGS, "observations": OBSERVATIONS}),
     "chat": obj(ANSWER), "interview": obj(ANSWER),
+    "fgi_guide": obj({"sections": {"type": "array", "items": obj({"title": STRING, "text": STRING, "evidence_ids": STRINGS})}, "assumptions": STRINGS}),
     "debrief": obj({**ANSWER, **{k: {"type": "array", "items": SUMMARY} for k in (
         "common_needs", "disagreements", "hypotheses", "unsupported_claims", "followup_questions")}}),
     "proposal": obj({**ANSWER, "changes": {"type": "array", "items": obj({
@@ -51,6 +52,7 @@ TASKS = {
     "insights": "Extract at most 8 shareable paraphrased insights from this chunk for OWNER REVIEW. Never publish. Include applicability, limitations, competitor; blank dates/URLs if not present. feature must be from supplied taxonomy.",
     "persona": "Create a SYNTHETIC advertiser persona for target_segment. Distinguish observed excerpts from assumed goals/preferences. Prefer both research and advertiser VoC; disclose missing evidence. Use requested_name if provided.",
     "chat": "Answer the question using relevant evidence and server statistics. Explain conflicting evidence, planning hypotheses and uncertainty. Preserve moderator messages and decisions.",
+    "fgi_guide": "Design a fictional FGI moderation guide for the supplied research questions and recruited personas. Return exactly one section per supplied section_title, in the same order and exact Korean titles. Use supplied public evidence to ground probes; factual claims require linked evidence_ids. Qualitative questions/rules may have empty references. Include no invented timings, participant counts, results or quantitative claims. Distinguish assumptions and future real-customer validation. Do not claim this simulation validates customers.",
     "interview": "Respond AS the specified fictional persona. Maintain its goals and constraints. Respond to preceding speakers without automatically agreeing. In challenge round, explain a reasoned disagreement; never manufacture actual customer validation. Include inferred preferences in assumptions.",
     "debrief": "Synthesize all supplied conversation: common needs, disagreements, hypotheses, unsupported claims, questions for real customers. Link each summary to supplied message IDs and evidence IDs. Include moderator product decisions. Unsupported claims are questions/hypotheses, not facts.",
     "proposal": "Propose edits ONLY to provided PRD section IDs. Each change is a complete replacement section with rationale and evidence IDs. Honor all active moderator decisions and return all their decision_ids. Preserve human product scope. Do not claim changes have already been applied. Explain assumptions and follow-up validation.",

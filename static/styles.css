@@ -857,9 +857,14 @@ footer {
     font-size: 24px;
   }
   .sidebar .logo small,
-  .project-label,
-  .sidebar-bottom {
+  .project-label {
     display: none;
+  }
+  .sidebar-bottom {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-top: 10px;
   }
   nav {
     display: flex;
@@ -1020,6 +1025,12 @@ form [type="submit"] {
   display: grid;
   gap: 8px;
 }
+.study-steps { display: flex; flex-wrap: wrap; gap: 12px; padding: 16px 24px; }
+.study-steps li { padding: 8px 14px; border-radius: 10px; background: #edf1f5; }
+.study-steps .current { background: #123b4d; color: white; font-weight: 700; }
+#study-detail .panel form { display: grid; gap: 12px; }
+#study-detail > button, #study-list > button { margin: 5px; }
+#citation-check-result { overflow-x: auto; }
 @media (max-width: 900px) {
   .scope-grid {
     grid-template-columns: 1fr 1fr;

@@ -57,7 +57,8 @@ class Voc:
         rows = body.get("features")
         if not isinstance(rows, list) or not 1 <= len(rows) <= 200:
             raise AppError("기능 목록은 1~200개여야 합니다.")
-        tree, seen = self.features(p), set()
+        previous, seen = self.features(p), set()
+        tree = dict(previous)
         prepared = []
         for row in rows:
             key = text(row, "key", 80)
@@ -68,6 +69,12 @@ class Voc:
                     "parent_feature_id": optional(row, "parent_feature_id", 80), "terms": strings(row.get("terms", []), 50, 100)}
             prepared.append(item)
             tree[key] = item
+        moved = {item["key"] for item in prepared if item["key"] in previous
+                 and item["service_id"] != previous[item["key"]]["service_id"]}
+        if moved:
+            for record in self.store.list(p, "voc") + self.store.list(p, "insight"):
+                if moved.intersection(record.get("feature_ids", [record.get("feature")])):
+                    raise AppError("자료에 연결된 기능은 다른 서비스로 이동할 수 없습니다. 새 기능을 등록하고 자료 분류를 검토해 이관하세요.", 409)
         # A parent edit can invalidate children omitted from this import.
         for key in tree:
             path, cursor = set(), key

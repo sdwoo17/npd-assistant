@@ -24,7 +24,7 @@ def seed(store, credentials=None, public_demo=True):
     store.create_user(*credentials["po"], "po", project)
     user = {"id": owner_id, "role": "owner", "project_id": project}
     service = Service(store, create_model())
-    service.import_features(user, json.loads((ROOT / "samples/features.json").read_text()))
+    service.import_features(user, json.loads((ROOT / "samples/features.json").read_text(encoding="utf-8")))
     raw = (ROOT / "samples" / "research.md").read_bytes()
     source = service.post(user, "/api/research/upload", {"title": "가상 리테일미디어 리서치", "filename": "research.md", "content_base64": base64.b64encode(raw).decode()})
     claims = [
